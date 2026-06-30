@@ -1,0 +1,15 @@
+# Stack pensée pour un déploiement Git via Portainer.
+# Les variables sont renseignées dans l'UI Portainer (section "Environment variables")
+# au moment de créer la stack — d'où l'interpolation ${VAR} ci-dessous.
+services:
+  discord-anythingllm:
+    build: .
+    container_name: discord-anythingllm
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      ANYTHINGLLM_URL: ${ANYTHINGLLM_URL}
+      ANYTHINGLLM_API_KEY: ${ANYTHINGLLM_API_KEY}
+      ANYTHINGLLM_WORKSPACE: ${ANYTHINGLLM_WORKSPACE}
+      ANYTHINGLLM_MODE: ${ANYTHINGLLM_MODE:-chat}
+      ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS:-}
