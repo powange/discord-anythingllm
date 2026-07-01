@@ -110,6 +110,27 @@ Avec l'authentification par **clé API**, AnythingLLM enregistre les messages **
 
 L'usage d'un **`sessionId` par salon** limite le risque (chaque salon a un historique séparé, plus court). En cas de souci sur un salon précis, repartir d'un salon neuf réinitialise la session, ou bascule en mode `query` (moins dépendant de l'historique).
 
+## Dépannage
+
+**Le bot affiche « … est en train d'écrire » mais ne répond jamais.**
+Le bot interroge AnythingLLM en streaming ; s'il reste bloqué, active les logs et regarde la sortie du conteneur :
+
+1. mets `DEBUG=true`, redéploie, puis suis les logs : `docker logs -f discord-anythingllm` ;
+2. tu verras le statut HTTP, le `content-type` du flux et le détail des premiers événements reçus ;
+3. au-delà de `STREAM_IDLE_TIMEOUT_MS` (2 min par défaut) sans **aucune** donnée, la requête est abandonnée et un message d'erreur est posté au lieu d'un « typing » infini.
+
+Test rapide de l'API, hors du bot :
+
+```bash
+curl -N -X POST "$ANYTHINGLLM_URL/api/v1/workspace/$ANYTHINGLLM_WORKSPACE/stream-chat" \
+  -H "Authorization: Bearer $ANYTHINGLLM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"message":"bonjour","mode":"chat","sessionId":"test"}'
+```
+
+Si `curl` ne renvoie rien non plus, le problème est côté AnythingLLM (workspace, modèle non configuré, agent en attente d'approbation d'un tool call…), pas côté bot. En mode agent, pense à `AGENT_AUTO_APPROVED_SKILLS` (voir ci-dessus).
+
 ## Licence
 
 [MIT](LICENSE)

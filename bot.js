@@ -28,6 +28,10 @@ const allowedChannels = new Set(
 // Mode agent : préfixe la question par @agent pour déclencher skills/tools/MCP
 const agentEnabled = ANYTHINGLLM_AGENT === 'true';
 
+// Diagnostic & robustesse
+const DEBUG = process.env.DEBUG === 'true';
+const STREAM_IDLE_MS = Number(process.env.STREAM_IDLE_TIMEOUT_MS) || 120000;
+
 const DISCORD_LIMIT = 2000; // limite de caractères par message Discord
 
 // --- Intégration AnythingLLM ---
@@ -47,18 +51,42 @@ async function askAnythingLLM(message, sessionId, onStatus) {
   const url = `${ANYTHINGLLM_URL}/api/v1/workspace/${ANYTHINGLLM_WORKSPACE}/stream-chat`;
   // @agent déclenche l'agent AnythingLLM via la Developer API (mode reste chat/query)
   const payload = agentEnabled ? `@agent ${message}` : message;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${ANYTHINGLLM_API_KEY}`,
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify({ message: payload, mode: ANYTHINGLLM_MODE, sessionId }),
-  });
+
+  // Coupe-circuit : abandonne si aucune donnée n'arrive pendant STREAM_IDLE_MS
+  const controller = new AbortController();
+  let idleTimer;
+  const resetIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_MS);
+  };
+
+  const started = Date.now();
+  console.log(`→ stream-chat | mode=${ANYTHINGLLM_MODE} agent=${agentEnabled} | q="${message.slice(0, 80)}"`);
+
+  resetIdle();
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ANYTHINGLLM_API_KEY}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({ message: payload, mode: ANYTHINGLLM_MODE, sessionId }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(idleTimer);
+    if (controller.signal.aborted) throw new Error(`Timeout: aucune réponse d'AnythingLLM après ${STREAM_IDLE_MS} ms`);
+    throw err;
+  }
+
+  console.log(`  stream ouvert: HTTP ${res.status} | content-type=${res.headers.get('content-type') || '?'}`);
 
   // Erreur HTTP (auth, workspace inexistant, serveur down…)
   if (!res.ok || !res.body) {
+    clearTimeout(idleTimer);
     const body = await res.text().catch(() => '');
     throw new Error(`HTTP ${res.status} ${res.statusText} ${body}`.trim());
   }
@@ -67,38 +95,54 @@ async function askAnythingLLM(message, sessionId, onStatus) {
   const decoder = new TextDecoder();
   let buffer = '';
   let answer = '';
+  let events = 0;
   let closed = false;
 
-  // Lit le flux SSE : chaque événement est une ligne "data: {json}"
-  while (!closed) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  try {
+    // Lit le flux SSE : chaque événement est une ligne "data: {json}"
+    while (!closed) {
+      const { done, value } = await reader.read();
+      resetIdle();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? ''; // garde la ligne incomplète pour le prochain tour
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? ''; // garde la ligne incomplète pour le prochain tour
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const data = trimmed.slice(5).trim();
-      if (!data || data === '[DONE]') continue;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const data = trimmed.slice(5).trim();
+        if (!data || data === '[DONE]') continue;
 
-      let evt;
-      try { evt = JSON.parse(data); } catch { continue; } // ignore le non-JSON
+        let evt;
+        try { evt = JSON.parse(data); } catch { continue; } // ignore le non-JSON
+        events += 1;
+        if (DEBUG && events <= 8) console.log(`  event #${events}: ${data.slice(0, 200)}`);
 
-      if (evt.error) { await reader.cancel().catch(() => {}); throw new Error(String(evt.error)); }
+        if (evt.error) throw new Error(String(evt.error));
 
-      const status = statusFromEvent(evt);
-      if (status) onStatus?.(status);
-      else if (typeof evt.textResponse === 'string') answer += evt.textResponse; // accumule la réponse
+        const status = statusFromEvent(evt);
+        if (status) onStatus?.(status);
+        else if (typeof evt.textResponse === 'string') answer += evt.textResponse; // accumule la réponse
 
-      if (evt.close === true) { closed = true; break; }
+        if (evt.close === true) { closed = true; break; }
+      }
     }
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error(`Timeout: flux AnythingLLM inactif depuis ${STREAM_IDLE_MS} ms`);
+    throw err;
+  } finally {
+    clearTimeout(idleTimer);
+    await reader.cancel().catch(() => {});
   }
 
-  await reader.cancel().catch(() => {});
-  return answer.trim();
+  const result = answer.trim();
+  console.log(`← réponse: ${result.length} car., ${events} évén., ${Date.now() - started} ms`);
+  if (!result && events) {
+    console.warn("  ⚠️ réponse vide malgré des événements — schéma d'événements inattendu ? (relance avec DEBUG=true)");
+  }
+  return result;
 }
 
 // --- Découpe des réponses longues ---
@@ -213,8 +257,9 @@ client.on(Events.MessageCreate, async (message) => {
   } catch (err) {
     console.error('Erreur AnythingLLM:', err);
     if (statusMsg) await statusMsg.delete().catch(() => {});
+    const hint = /timeout/i.test(err?.message || '') ? ' (délai dépassé)' : '';
     await message
-      .reply('⚠️ Une erreur est survenue en interrogeant la base de connaissances.')
+      .reply(`⚠️ Une erreur est survenue en interrogeant la base de connaissances.${hint}`)
       .catch(() => {});
   }
 });
