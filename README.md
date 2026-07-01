@@ -24,8 +24,9 @@ Chaque salon utilise un `sessionId` distinct (`discord-<channelId>`) : chaque sa
 | `ANYTHINGLLM_URL`       |     ✅      |   —    | URL de l'instance AnythingLLM, **sans slash final** (ex: `https://llm.exemple.com`). |
 | `ANYTHINGLLM_API_KEY`   |     ✅      |   —    | Clé API AnythingLLM.                                                              |
 | `ANYTHINGLLM_WORKSPACE` |     ✅      |   —    | Slug du workspace (visible dans son URL).                                         |
-| `ANYTHINGLLM_MODE`      |     ❌      | `chat` | `chat` (conversationnel) ou `query` (strictement factuel).                        |
-| `ALLOWED_CHANNEL_IDS`   |     ❌      |  vide  | IDs de salons (séparés par des virgules) où répondre à tous les messages.         |
+| `ANYTHINGLLM_MODE`      |     ❌      | `chat`  | `chat` (conversationnel) ou `query` (strictement factuel). `agent` n'est **pas** valide ici. |
+| `ANYTHINGLLM_AGENT`     |     ❌      | `false` | `true` pour préfixer chaque question par `@agent` (déclenche les skills/tools/MCP). |
+| `ALLOWED_CHANNEL_IDS`   |     ❌      |  vide   | IDs de salons (séparés par des virgules) où répondre à tous les messages.         |
 
 Le bot **échoue proprement au démarrage** si une variable obligatoire manque.
 
@@ -61,6 +62,13 @@ Content-Type: application/json
 ```
 
 Il lit le champ `textResponse` de la réponse (et gère un éventuel champ `error`).
+
+### Mode agent
+
+Le paramètre `mode` de l'API n'accepte que `chat` et `query` : **`agent` n'y est pas une valeur valide**. Pour déclencher l'agent AnythingLLM (skills, tools, MCP), deux options :
+
+- **`ANYTHINGLLM_AGENT=true`** : le bot préfixe chaque question par `@agent`, ce qui invoque l'agent via la Developer API (`ANYTHINGLLM_MODE` reste `chat` ou `query`).
+- **Réglage du workspace** : sur un workspace en *Agent mode* (par défaut pour les workspaces récents) avec *native tool calling* supporté par ton provider LLM, l'agent tourne automatiquement — inutile de toucher à `ANYTHINGLLM_AGENT`.
 
 ## Lancer en local
 

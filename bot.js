@@ -8,6 +8,7 @@ const {
   ANYTHINGLLM_API_KEY,
   ANYTHINGLLM_WORKSPACE,
   ANYTHINGLLM_MODE = 'chat',
+  ANYTHINGLLM_AGENT = 'false',
   ALLOWED_CHANNEL_IDS = '',
 } = process.env;
 
@@ -24,19 +25,24 @@ const allowedChannels = new Set(
   ALLOWED_CHANNEL_IDS.split(',').map((id) => id.trim()).filter(Boolean),
 );
 
+// Mode agent : préfixe la question par @agent pour déclencher skills/tools/MCP
+const agentEnabled = ANYTHINGLLM_AGENT === 'true';
+
 const DISCORD_LIMIT = 2000; // limite de caractères par message Discord
 
 // --- Intégration AnythingLLM ---
 // Interroge le workspace et renvoie la réponse texte
 async function askAnythingLLM(message, sessionId) {
   const url = `${ANYTHINGLLM_URL}/api/v1/workspace/${ANYTHINGLLM_WORKSPACE}/chat`;
+  // @agent déclenche l'agent AnythingLLM via la Developer API (mode reste chat/query)
+  const payload = agentEnabled ? `@agent ${message}` : message;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${ANYTHINGLLM_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message, mode: ANYTHINGLLM_MODE, sessionId }),
+    body: JSON.stringify({ message: payload, mode: ANYTHINGLLM_MODE, sessionId }),
   });
 
   // Erreur HTTP (auth, workspace inexistant, serveur down…)
@@ -102,7 +108,9 @@ const client = new Client({
 
 client.once(Events.ClientReady, (c) => {
   console.log(`✅ Connecté en tant que ${c.user.tag}`);
-  console.log(`   Workspace: ${ANYTHINGLLM_WORKSPACE} | Mode: ${ANYTHINGLLM_MODE}`);
+  console.log(
+    `   Workspace: ${ANYTHINGLLM_WORKSPACE} | Mode: ${ANYTHINGLLM_MODE}${agentEnabled ? ' | Agent: on' : ''}`,
+  );
   if (allowedChannels.size) {
     console.log(`   Salons en écoute totale: ${[...allowedChannels].join(', ')}`);
   }
