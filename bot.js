@@ -30,7 +30,10 @@ const agentEnabled = ANYTHINGLLM_AGENT === 'true';
 
 // Diagnostic & robustesse
 const DEBUG = process.env.DEBUG === 'true';
-const STREAM_IDLE_MS = Number(process.env.STREAM_IDLE_TIMEOUT_MS) || 120000;
+// Deux temps : délai généreux avant le 1er octet (cold start d'un modèle local),
+// puis délai court entre deux morceaux une fois le flux lancé.
+const FIRST_BYTE_MS = Number(process.env.FIRST_BYTE_TIMEOUT_MS) || 300000;
+const STREAM_IDLE_MS = Number(process.env.STREAM_IDLE_TIMEOUT_MS) || 60000;
 
 const DISCORD_LIMIT = 2000; // limite de caractères par message Discord
 
@@ -55,15 +58,17 @@ async function askAnythingLLM(message, sessionId, onStatus) {
   // Coupe-circuit : abandonne si aucune donnée n'arrive pendant STREAM_IDLE_MS
   const controller = new AbortController();
   let idleTimer;
-  const resetIdle = () => {
+  let gotData = false;
+  // 1er octet : délai généreux (FIRST_BYTE_MS) ; ensuite : délai court entre morceaux (STREAM_IDLE_MS)
+  const arm = () => {
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_MS);
+    idleTimer = setTimeout(() => controller.abort(), gotData ? STREAM_IDLE_MS : FIRST_BYTE_MS);
   };
 
   const started = Date.now();
   console.log(`→ stream-chat | mode=${ANYTHINGLLM_MODE} agent=${agentEnabled} | q="${message.slice(0, 80)}"`);
 
-  resetIdle();
+  arm();
   let res;
   try {
     res = await fetch(url, {
@@ -78,7 +83,7 @@ async function askAnythingLLM(message, sessionId, onStatus) {
     });
   } catch (err) {
     clearTimeout(idleTimer);
-    if (controller.signal.aborted) throw new Error(`Timeout: aucune réponse d'AnythingLLM après ${STREAM_IDLE_MS} ms`);
+    if (controller.signal.aborted) throw new Error(`Timeout: aucune réponse d'AnythingLLM après ${FIRST_BYTE_MS} ms`);
     throw err;
   }
 
@@ -102,8 +107,9 @@ async function askAnythingLLM(message, sessionId, onStatus) {
     // Lit le flux SSE : chaque événement est une ligne "data: {json}"
     while (!closed) {
       const { done, value } = await reader.read();
-      resetIdle();
       if (done) break;
+      if (value && value.length) gotData = true; // 1er octet reçu -> bascule sur le délai court
+      arm();
       buffer += decoder.decode(value, { stream: true });
 
       const lines = buffer.split('\n');
@@ -130,7 +136,11 @@ async function askAnythingLLM(message, sessionId, onStatus) {
       }
     }
   } catch (err) {
-    if (controller.signal.aborted) throw new Error(`Timeout: flux AnythingLLM inactif depuis ${STREAM_IDLE_MS} ms`);
+    if (controller.signal.aborted) {
+      throw new Error(gotData
+        ? `Timeout: flux AnythingLLM inactif depuis ${STREAM_IDLE_MS} ms`
+        : `Timeout: aucune réponse d'AnythingLLM après ${FIRST_BYTE_MS} ms`);
+    }
     throw err;
   } finally {
     clearTimeout(idleTimer);

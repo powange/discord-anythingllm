@@ -117,7 +117,7 @@ Le bot interroge AnythingLLM en streaming ; s'il reste bloqué, active les logs 
 
 1. mets `DEBUG=true`, redéploie, puis suis les logs : `docker logs -f discord-anythingllm` ;
 2. tu verras le statut HTTP, le `content-type` du flux et le détail des premiers événements reçus ;
-3. au-delà de `STREAM_IDLE_TIMEOUT_MS` (2 min par défaut) sans **aucune** donnée, la requête est abandonnée et un message d'erreur est posté au lieu d'un « typing » infini.
+3. la requête est abandonnée (au lieu d'un « typing » infini, un message d'erreur est posté) si le **1ᵉʳ octet** n'arrive pas sous `FIRST_BYTE_TIMEOUT_MS` (5 min par défaut — laisse le temps à un modèle local de chauffer), ou si le flux reste ensuite **inactif** plus de `STREAM_IDLE_TIMEOUT_MS` (1 min par défaut).
 
 Test rapide de l'API, hors du bot :
 
