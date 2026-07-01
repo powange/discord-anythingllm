@@ -31,9 +31,20 @@ const agentEnabled = ANYTHINGLLM_AGENT === 'true';
 const DISCORD_LIMIT = 2000; // limite de caractères par message Discord
 
 // --- Intégration AnythingLLM ---
-// Interroge le workspace et renvoie la réponse texte
-async function askAnythingLLM(message, sessionId) {
-  const url = `${ANYTHINGLLM_URL}/api/v1/workspace/${ANYTHINGLLM_WORKSPACE}/chat`;
+// Extrait un message de statut/skill lisible d'un événement SSE (sinon null).
+// Ces événements viennent des appels introspect() des skills de l'agent.
+function statusFromEvent(evt) {
+  const type = String(evt.type || '').toLowerCase();
+  const isStatus = type.includes('status') || type.includes('thought') || type.includes('thinking');
+  if (!isStatus) return null;
+  const text = String(evt.content ?? evt.textResponse ?? evt.message ?? '').trim();
+  return text || null;
+}
+
+// Interroge le workspace en streaming (SSE) et renvoie le texte final.
+// onStatus(text) est appelé pour chaque activité de skill remontée par l'agent.
+async function askAnythingLLM(message, sessionId, onStatus) {
+  const url = `${ANYTHINGLLM_URL}/api/v1/workspace/${ANYTHINGLLM_WORKSPACE}/stream-chat`;
   // @agent déclenche l'agent AnythingLLM via la Developer API (mode reste chat/query)
   const payload = agentEnabled ? `@agent ${message}` : message;
   const res = await fetch(url, {
@@ -41,20 +52,53 @@ async function askAnythingLLM(message, sessionId) {
     headers: {
       Authorization: `Bearer ${ANYTHINGLLM_API_KEY}`,
       'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
     },
     body: JSON.stringify({ message: payload, mode: ANYTHINGLLM_MODE, sessionId }),
   });
 
   // Erreur HTTP (auth, workspace inexistant, serveur down…)
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
     const body = await res.text().catch(() => '');
     throw new Error(`HTTP ${res.status} ${res.statusText} ${body}`.trim());
   }
 
-  const data = await res.json();
-  // AnythingLLM peut renvoyer une erreur applicative dans le corps
-  if (data.error) throw new Error(String(data.error));
-  return (data.textResponse ?? '').trim();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let answer = '';
+  let closed = false;
+
+  // Lit le flux SSE : chaque événement est une ligne "data: {json}"
+  while (!closed) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? ''; // garde la ligne incomplète pour le prochain tour
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+
+      let evt;
+      try { evt = JSON.parse(data); } catch { continue; } // ignore le non-JSON
+
+      if (evt.error) { await reader.cancel().catch(() => {}); throw new Error(String(evt.error)); }
+
+      const status = statusFromEvent(evt);
+      if (status) onStatus?.(status);
+      else if (typeof evt.textResponse === 'string') answer += evt.textResponse; // accumule la réponse
+
+      if (evt.close === true) { closed = true; break; }
+    }
+  }
+
+  await reader.cancel().catch(() => {});
+  return answer.trim();
 }
 
 // --- Découpe des réponses longues ---
@@ -140,15 +184,35 @@ client.on(Events.MessageCreate, async (message) => {
   // sessionId distinct par salon → fil de conversation propre côté AnythingLLM
   const sessionId = `discord-${message.channel.id}`;
 
-  try {
-    const answer = await withTyping(message.channel, () => askAnythingLLM(question, sessionId));
-    const chunks = splitMessage(answer || '_(réponse vide)_');
+  // Message de statut éphémère : créé au 1er événement de skill, effacé à la fin
+  let statusMsg = null;
+  let lastEdit = 0;
+  const showStatus = async (text) => {
+    const now = Date.now();
+    if (now - lastEdit < 1500) return; // throttle anti rate-limit Discord
+    lastEdit = now;
+    const content = `🔧 ${text}`.slice(0, DISCORD_LIMIT);
+    try {
+      if (!statusMsg) statusMsg = await message.channel.send(content);
+      else await statusMsg.edit(content);
+    } catch { /* l'affichage du statut ne doit jamais casser la requête */ }
+  };
 
+  try {
+    const answer = await withTyping(message.channel, () =>
+      askAnythingLLM(question, sessionId, showStatus),
+    );
+
+    // La réponse est prête : on retire le message de statut éphémère
+    if (statusMsg) await statusMsg.delete().catch(() => {});
+
+    const chunks = splitMessage(answer || '_(réponse vide)_');
     // Premier morceau en réponse, le reste à la suite
     await message.reply(chunks[0]);
     for (const chunk of chunks.slice(1)) await message.channel.send(chunk);
   } catch (err) {
     console.error('Erreur AnythingLLM:', err);
+    if (statusMsg) await statusMsg.delete().catch(() => {});
     await message
       .reply('⚠️ Une erreur est survenue en interrogeant la base de connaissances.')
       .catch(() => {});

@@ -51,17 +51,18 @@ Le bot **échoue proprement au démarrage** si une variable obligatoire manque.
 2. Crée (ou choisis) un workspace ; son slug (dans l'URL) donne `ANYTHINGLLM_WORKSPACE`.
 3. `ANYTHINGLLM_URL` est l'URL de base de ton instance, **sans slash final**.
 
-Le bot appelle :
+Le bot appelle l'endpoint **streaming** (SSE) :
 
 ```
-POST {ANYTHINGLLM_URL}/api/v1/workspace/{ANYTHINGLLM_WORKSPACE}/chat
+POST {ANYTHINGLLM_URL}/api/v1/workspace/{ANYTHINGLLM_WORKSPACE}/stream-chat
 Authorization: Bearer {ANYTHINGLLM_API_KEY}
 Content-Type: application/json
+Accept: text/event-stream
 
 { "message": "<texte>", "mode": "chat", "sessionId": "discord-<channelId>" }
 ```
 
-Il lit le champ `textResponse` de la réponse (et gère un éventuel champ `error`).
+Il accumule les morceaux de texte (`textResponse`) au fil du flux pour composer la réponse, et gère un éventuel champ `error`.
 
 ### Mode agent
 
@@ -69,6 +70,12 @@ Le paramètre `mode` de l'API n'accepte que `chat` et `query` : **`agent` n'y es
 
 - **`ANYTHINGLLM_AGENT=true`** : le bot préfixe chaque question par `@agent`, ce qui invoque l'agent via la Developer API (`ANYTHINGLLM_MODE` reste `chat` ou `query`).
 - **Réglage du workspace** : sur un workspace en *Agent mode* (par défaut pour les workspaces récents) avec *native tool calling* supporté par ton provider LLM, l'agent tourne automatiquement — inutile de toucher à `ANYTHINGLLM_AGENT`.
+
+L'agent peut enchaîner **plusieurs skills** sur une même demande (multi-step tool calling). Pense à autoriser les tool calls côté serveur AnythingLLM via `AGENT_AUTO_APPROVED_SKILLS` (liste de skill-ids, ou `<all>`), sinon les skills demandant une approbation restent bloqués faute d'interface pour approuver.
+
+### Statut « réflexion » éphémère
+
+Grâce au streaming, quand l'agent utilise des skills, le bot poste un **message de statut temporaire** (`🔧 …`) qui se met à jour au fil des skills utilisés, puis **se supprime** dès que la réponse définitive est prête. Si l'instance n'émet aucun événement de statut (mode chat simple ou version d'AnythingLLM qui ne les remonte pas via l'API), aucun message temporaire n'apparaît : seul le résultat final est envoyé.
 
 ## Lancer en local
 
