@@ -159,6 +159,78 @@ async function syncReleaseNotes(docs) {
     + `${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)`;
 }
 
+// Libellés français des catégories du coffre (clés de l'API)
+const CHEST_CATEGORIES = {
+  Ship: 'Navire',
+  Vanity: 'Apparence (titres, emotes, coiffures, accessoires, tatouages…)',
+  Clothing: 'Vêtements',
+  Equipment: 'Équipement (instruments, chope, boussole, longue-vue, pelle…)',
+  Armory: 'Armurerie (armes)',
+  ShipTrinket: 'Bibelots de navire',
+  ShipDecoration: 'Décorations de navire',
+  Bones: 'Corps squelettiques',
+  Pets: 'Animaux de compagnie',
+};
+
+// Catalogue du coffre : un document par sous-catégorie, avec une introduction qui dit ce qu'est
+// le « coffre » (sinon le modèle comprend « coffres au trésor »). Images et identifiants retirés.
+async function syncChestItems(docs) {
+  const md = await api('chest-items');
+  const sections = new Map(); // "Catégorie/Sous-catégorie" → lignes d'objets
+  let category = null;
+  let key = null;
+  for (const line of md.split('\n')) {
+    if (line.startsWith('## ')) { category = line.slice(3).trim(); key = null; continue; }
+    if (line.startsWith('### ') && category) {
+      key = `${category}/${line.slice(4).trim()}`;
+      sections.set(key, []);
+      continue;
+    }
+    if (!key || !line.trim() || /^\s*- Image :/.test(line)) continue;
+    sections.get(key).push(line.replace(/ \(`[^`]+`\)/, ''));
+  }
+  if (!sections.size) throw new Error('API chest-items: aucune section reconnue (format Markdown modifié ?)');
+
+  const base = `${SOT_API_URL}/chest-items`;
+  const counts = { 'mis à jour': 0, inchangé: 0 };
+  for (const [section, lines] of sections) {
+    const [cat, sub] = section.split('/');
+    const catLabel = CHEST_CATEGORIES[cat] ?? cat;
+    const items = lines.filter((l) => l.startsWith('- ')).length;
+    const text = [
+      `# Coffre du pirate de Sea of Thieves — ${catLabel} › ${sub}`,
+      '',
+      'Le « coffre » (coffre du pirate) regroupe les objets cosmétiques et d\'équipement que l\'on peut '
+        + 'acheter ou débloquer dans Sea of Thieves. Ce ne sont pas des coffres au trésor. '
+        + `Ce document liste les ${items} objets de la catégorie ${catLabel} (${cat}), sous-catégorie ${sub}, `
+        + 'avec leur description, leur coût et leurs prérequis.',
+      '',
+      ...lines,
+    ].join('\n');
+    try {
+      counts[await upsertDoc(docs, {
+        docSource: `${base}/${section}`, title: `Coffre du pirate — ${catLabel} › ${sub}`,
+        text, label: `chest-items ${section}`,
+      })] += 1;
+    } catch (err) {
+      console.error(`📚 sync chest-items ${section} en échec:`, err.message);
+    }
+  }
+
+  // Ancien document unique et sous-catégories disparues de l'API
+  const current = new Set([...sections.keys()].map((s) => `${base}/${s}`));
+  const stale = docs
+    .filter((doc) => doc.docSource === base || (doc.docSource?.startsWith(`${base}/`) && !current.has(doc.docSource)))
+    .map((doc) => doc.docpath);
+  if (stale.length) await removeDocs(stale);
+
+  return `${sections.size} sous-catégories — ${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)`
+    + (stale.length ? `, ${stale.length} ancien(s) document(s) retiré(s)` : '');
+}
+
+// Endpoints découpés en plusieurs documents ; les autres donnent un seul document
+const SPLIT_SYNCS = { 'release-notes': syncReleaseNotes, 'chest-items': syncChestItems };
+
 async function syncAll(endpoints) {
   console.log(`📚 Synchronisation démarrée (${new Date().toLocaleString('fr-FR')})`);
   let docs;
@@ -171,7 +243,7 @@ async function syncAll(endpoints) {
   for (const endpoint of endpoints) {
     console.log(`📚 sync ${endpoint}: récupération…`);
     try {
-      const result = endpoint === 'release-notes' ? await syncReleaseNotes(docs) : await syncEndpoint(docs, endpoint);
+      const result = SPLIT_SYNCS[endpoint] ? await SPLIT_SYNCS[endpoint](docs) : await syncEndpoint(docs, endpoint);
       console.log(`📚 sync ${endpoint}: ${result}`);
     } catch (err) {
       // Une source en échec ne bloque pas les autres ; on réessaiera au prochain tour

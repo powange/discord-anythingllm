@@ -73,6 +73,30 @@ function statusFromEvent(evt) {
   return text || null;
 }
 
+// Traduit une étape brute de l'agent en statut lisible pour Discord (null = à ne pas afficher).
+// Ex. brut : "@agent is executing `web-browsing` tool {\"query\": \"...\"}"
+const TOOL_LABELS = {
+  'web-browsing': '🔎 Recherche sur le web',
+  'web-scraping': '🌐 Lecture d\'une page web',
+  'rag-memory': '📄 Recherche dans les documents',
+  'document-summarizer': '📄 Lecture des documents',
+};
+function formatStatus(raw) {
+  const text = raw.replace(/^@agent:?\s*/, '');
+  const tool = text.match(/^is executing `([^`]+)` tool\s*(\{[\s\S]*\})?/);
+  if (tool) {
+    let args = {};
+    try { args = JSON.parse(tool[2] || '{}'); } catch { /* arguments illisibles : libellé seul */ }
+    const detail = args.query ?? args.url ?? args.content ?? args.document_filename;
+    const label = TOOL_LABELS[tool[1]] ?? `🔧 Outil ${tool[1]}`;
+    return detail ? `${label} : « ${String(detail).slice(0, 200)} »` : `${label}…`;
+  }
+  const found = text.match(/found (\d+) results/i);
+  if (found) return `🔎 ${found[1]} résultats trouvés, lecture en cours…`;
+  if (/^Using SearXNG/i.test(text)) return null; // redondant avec l'appel d'outil
+  return `🔧 ${text}`;
+}
+
 // Interroge le workspace en streaming (SSE) et renvoie le texte final.
 // onStatus(text) est appelé pour chaque activité de skill remontée par l'agent.
 async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM_MODE, agent = agentEnabled } = {}) {
@@ -155,8 +179,9 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
 
         const status = statusFromEvent(evt);
         if (status) {
-          console.log(`  🔧 ${status.slice(0, 200)}`); // trace des skills de l'agent (ex. recherche web)
-          onStatus?.(status);
+          console.log(`  🔧 ${status.slice(0, 200)}`); // trace brute des skills de l'agent (ex. recherche web)
+          const pretty = formatStatus(status);
+          if (pretty) onStatus?.(pretty);
         }
         else if (typeof evt.textResponse === 'string') {
           const isChunk = String(evt.type || '').toLowerCase().includes('chunk');
@@ -198,7 +223,7 @@ async function askWithRouting(message, sessionId, onStatus) {
   if (answer && !isQueryRefusal(answer)) return answer;
 
   console.log('  ↪ rien dans les documents → relance en @agent');
-  onStatus?.('Rien dans la base de connaissances, recherche sur le web…');
+  onStatus?.('📚 Rien dans la base de connaissances, recherche sur le web…');
   // Session neuve à chaque relance : tout historique (AUCUNE_INFO, réponses précédentes) pousse
   // sinon le modèle à recopier une ancienne réponse au lieu d'appeler la recherche web.
   const webQuestion = `Fais une recherche sur le web pour répondre à cette question : ${message}\n\n(${DISCORD_FORMAT})`;
@@ -296,7 +321,7 @@ client.on(Events.MessageCreate, async (message) => {
     const now = Date.now();
     if (now - lastEdit < 1500) return; // throttle anti rate-limit Discord
     lastEdit = now;
-    const content = `🔧 ${text}`.slice(0, DISCORD_LIMIT);
+    const content = text.slice(0, DISCORD_LIMIT); // le statut porte déjà son emoji
     try {
       if (!statusMsg) statusMsg = await message.channel.send(content);
       else await statusMsg.edit(content);
