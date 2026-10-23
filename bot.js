@@ -1,6 +1,6 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Partials, Events } from 'discord.js';
-import { startDocSync } from './sync.js';
+import { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } from 'discord.js';
+import { startDocSync, findItemImages } from './sync.js';
 
 // --- Configuration depuis l'environnement ---
 const {
@@ -337,9 +337,13 @@ client.on(Events.MessageCreate, async (message) => {
     if (statusMsg) await statusMsg.delete().catch(() => {});
 
     const chunks = splitMessage(answer || '_(réponse vide)_');
+    // Images des objets du coffre cités, jointes au dernier morceau
+    const embeds = findItemImages(answer || '').map((item) =>
+      new EmbedBuilder().setTitle(item.name).setDescription(item.category).setThumbnail(item.image));
+    const withEmbeds = (content, i) => (i === chunks.length - 1 && embeds.length ? { content, embeds } : content);
     // Premier morceau en réponse, le reste à la suite
-    await message.reply(chunks[0]);
-    for (const chunk of chunks.slice(1)) await message.channel.send(chunk);
+    await message.reply(withEmbeds(chunks[0], 0));
+    for (const [i, chunk] of chunks.entries()) if (i > 0) await message.channel.send(withEmbeds(chunk, i));
   } catch (err) {
     console.error('Erreur AnythingLLM:', err);
     if (statusMsg) await statusMsg.delete().catch(() => {});

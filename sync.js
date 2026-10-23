@@ -172,13 +172,40 @@ const CHEST_CATEGORIES = {
   Pets: 'Animaux de compagnie',
 };
 
+// Images des objets du coffre : nom en minuscules → { name, image, category }.
+// Les URL restent hors des documents (bruit pour l'indexation, mal recopiées par le modèle) :
+// c'est le bot qui joint les images des objets cités dans une réponse.
+let itemImages = new Map();
+const MIN_NAME_LENGTH = 8; // évite les faux positifs sur des noms trop courts
+
+// Objets du coffre cités dans un texte, dans leur ordre d'apparition (max `limit`)
+export function findItemImages(text, limit = 4) {
+  const lower = text.toLowerCase();
+  const matches = [];
+  for (const [name, item] of itemImages) {
+    // Toutes les occurrences : la première peut être incluse dans un nom plus long
+    for (let start = lower.indexOf(name); start !== -1; start = lower.indexOf(name, start + 1)) {
+      matches.push({ ...item, start, end: start + name.length });
+    }
+  }
+  // Le nom le plus long l'emporte : « Barre amirale rituelle » plutôt que « Barre amirale »
+  matches.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+  const kept = [];
+  for (const m of matches) {
+    if (!kept.some((k) => (m.start < k.end && k.start < m.end) || k.image === m.image)) kept.push(m);
+  }
+  return kept.sort((a, b) => a.start - b.start).slice(0, limit);
+}
+
 // Catalogue du coffre : un document par sous-catégorie, avec une introduction qui dit ce qu'est
 // le « coffre » (sinon le modèle comprend « coffres au trésor »). Images et identifiants retirés.
 async function syncChestItems(docs) {
   const md = await api('chest-items');
   const sections = new Map(); // "Catégorie/Sous-catégorie" → lignes d'objets
+  const images = new Map();
   let category = null;
   let key = null;
+  let itemName = null;
   for (const line of md.split('\n')) {
     if (line.startsWith('## ')) { category = line.slice(3).trim(); key = null; continue; }
     if (line.startsWith('### ') && category) {
@@ -186,9 +213,19 @@ async function syncChestItems(docs) {
       sections.set(key, []);
       continue;
     }
-    if (!key || !line.trim() || /^\s*- Image :/.test(line)) continue;
+    if (!key || !line.trim()) continue;
+    const image = line.match(/^\s*- Image : (\S+)/)?.[1];
+    if (image) {
+      const id = itemName?.toLowerCase();
+      if (id && id.length >= MIN_NAME_LENGTH && !images.has(id)) {
+        images.set(id, { name: itemName, image, category: `${CHEST_CATEGORIES[category] ?? category} › ${key.split('/')[1]}` });
+      }
+      continue;
+    }
+    itemName = line.match(/^- \*\*(.+?)\*\*/)?.[1] ?? itemName;
     sections.get(key).push(line.replace(/ \(`[^`]+`\)/, ''));
   }
+  if (images.size) itemImages = images;
   if (!sections.size) throw new Error('API chest-items: aucune section reconnue (format Markdown modifié ?)');
 
   const base = `${SOT_API_URL}/chest-items`;
