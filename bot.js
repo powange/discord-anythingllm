@@ -36,9 +36,17 @@ const agentFallback = ANYTHINGLLM_AGENT === 'fallback';
 const QUERY_REFUSAL = (process.env.QUERY_REFUSAL_RESPONSE
   || 'There is no relevant information in this workspace to answer your query.').trim();
 
+// Le refus ci-dessus n'est renvoyé que si AUCUN extrait ne passe le seuil de similarité.
+// Quand des extraits proches mais hors sujet sont trouvés, le modèle répond « je ne sais pas »
+// avec ses propres mots : on lui demande donc un mot-clé fixe, facile à détecter.
+const NO_ANSWER_MARKER = 'AUCUNE_INFO';
+const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis. `
+  + `S'ils ne contiennent pas la réponse, réponds exactement « ${NO_ANSWER_MARKER} » et rien d'autre.)`;
+
 // Compare sans tenir compte de la casse, des espaces ni de la ponctuation finale
 const normalize = (s) => s.toLowerCase().replace(/\s+/g, ' ').replace(/[\s.!?…]+$/, '').trim();
-const isQueryRefusal = (answer) => normalize(answer) === normalize(QUERY_REFUSAL);
+const isQueryRefusal = (answer) =>
+  answer.includes(NO_ANSWER_MARKER) || normalize(answer) === normalize(QUERY_REFUSAL);
 
 // Diagnostic & robustesse
 const DEBUG = process.env.DEBUG === 'true';
@@ -171,7 +179,7 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
 async function askWithRouting(message, sessionId, onStatus) {
   if (!agentFallback) return askAnythingLLM(message, sessionId, onStatus);
 
-  const answer = await askAnythingLLM(message, sessionId, onStatus, { mode: 'query', agent: false });
+  const answer = await askAnythingLLM(message + QUERY_INSTRUCTION, sessionId, onStatus, { mode: 'query', agent: false });
   if (answer && !isQueryRefusal(answer)) return answer;
 
   console.log('  ↪ rien dans les documents → relance en @agent');
