@@ -72,6 +72,7 @@ async function syncEndpoint(endpoint) {
     return `inchangé (déjà dans le workspace${extras.length ? `, ${extras.length} doublon(s) retiré(s)` : ''})`;
   }
   const olds = existing.map((doc) => doc.docpath);
+  console.log(`📚 sync ${endpoint}: indexation dans AnythingLLM (${text.length} car.)…`);
 
   // Nouveau document d'abord, puis échange dans le workspace : pas de trou entre les deux versions
   const { documents } = await llm('POST', '/document/raw-text', {
@@ -90,7 +91,9 @@ async function syncEndpoint(endpoint) {
 }
 
 async function syncAll(endpoints) {
+  console.log(`📚 Synchronisation démarrée (${new Date().toLocaleString('fr-FR')})`);
   for (const endpoint of endpoints) {
+    console.log(`📚 sync ${endpoint}: récupération…`);
     try {
       console.log(`📚 sync ${endpoint}: ${await syncEndpoint(endpoint)}`);
     } catch (err) {
