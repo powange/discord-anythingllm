@@ -47,9 +47,14 @@ const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des doc
   + `S'ils ne contiennent pas la réponse, ou s'ils mentionnent seulement le sujet sans vraiment répondre `
   + `à la question, réponds exactement « ${NO_ANSWER_MARKER} » et rien d'autre. ${DISCORD_FORMAT})`;
 
-// Questions sur un personnage : la base (versions, coffre, emblèmes) ne les couvre pas et ne fait que
-// citer leur nom dans des objets. On passe directement à l'agent et à ses skills (ex. PNJ du wiki).
-const AGENT_FIRST = /\b(qui (est|sont|était|étaient)\b|c'est qui|parle[- ]moi d|pnj|npc|personnages?\b)/i;
+// Questions sur un personnage ou le lore : la base (versions, coffre, emblèmes) ne les couvre pas et ne
+// fait que citer des noms dans des objets. On passe directement à l'agent et à ses skills (PNJ, navires
+// du lore…). Pas « navire » seul : il désigne aussi toute une catégorie du coffre.
+const AGENT_FIRST = new RegExp([
+  "qui (est|sont|était|étaient)\\b", "c'est qui", "parle[- ]moi d", "raconte",
+  'pnj', 'npc', 'personnages?\\b',
+  'lore\\b', 'histoire\\b', 'légende de\\b', // pas « Légende des pirates » (un titre du jeu)
+].map((p) => `\\b${p}`).join('|'), 'i');
 
 // Compare sans tenir compte de la casse, des espaces ni de la ponctuation finale
 const normalize = (s) => s.toLowerCase().replace(/\s+/g, ' ').replace(/[\s.!?…]+$/, '').trim();
