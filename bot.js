@@ -44,8 +44,12 @@ const NO_ANSWER_MARKER = 'AUCUNE_INFO';
 // Discord n'affiche pas les tableaux Markdown : on demande des listes à la place
 const DISCORD_FORMAT = "Pas de tableau Markdown (Discord ne les affiche pas), utilise des listes.";
 const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis et des fiches éventuellement jointes. `
-  + `S'ils ne contiennent pas la réponse, réponds exactement « ${NO_ANSWER_MARKER} » et rien d'autre. `
-  + `${DISCORD_FORMAT})`;
+  + `S'ils ne contiennent pas la réponse, ou s'ils mentionnent seulement le sujet sans vraiment répondre `
+  + `à la question, réponds exactement « ${NO_ANSWER_MARKER} » et rien d'autre. ${DISCORD_FORMAT})`;
+
+// Questions sur un personnage : la base (versions, coffre, emblèmes) ne les couvre pas et ne fait que
+// citer leur nom dans des objets. On passe directement à l'agent et à ses skills (ex. PNJ du wiki).
+const AGENT_FIRST = /\b(qui (est|sont|était|étaient)\b|c'est qui|parle[- ]moi d|pnj|npc|personnages?\b)/i;
 
 // Compare sans tenir compte de la casse, des espaces ni de la ponctuation finale
 const normalize = (s) => s.toLowerCase().replace(/\s+/g, ' ').replace(/[\s.!?…]+$/, '').trim();
@@ -242,6 +246,10 @@ async function logVectorSearch(question) {
 async function askWithRouting(message, sessionId, onStatus) {
   if (DEBUG) await logVectorSearch(message);
   if (!agentFallback) return askAnythingLLM(message, sessionId, onStatus);
+  if (AGENT_FIRST.test(message)) {
+    console.log('  ↪ question sur un personnage → @agent directement');
+    return askAgent(message, sessionId, onStatus);
+  }
 
   // Objets et emblèmes cités par leur nom exact : on joint leur fiche, car la recherche
   // vectorielle retrouve mal un nom propre (« Au cœur du fléau » → « Cœur ardent »)
@@ -256,9 +264,14 @@ async function askWithRouting(message, sessionId, onStatus) {
 
   console.log('  ↪ rien dans les documents → relance en @agent');
   onStatus?.('📚 Rien dans la base de connaissances, je cherche ailleurs…');
-  // Session neuve à chaque relance : tout historique (AUCUNE_INFO, réponses précédentes) pousse
-  // sinon le modèle à recopier une ancienne réponse au lieu d'appeler la recherche web.
-  // Pas « fais une recherche web » : l'agent doit pouvoir choisir une skill spécialisée (ex. PNJ du wiki)
+  return askAgent(message, sessionId, onStatus);
+}
+
+// Passage par l'agent (skills personnalisées, recherche web).
+// Session neuve à chaque appel : tout historique (AUCUNE_INFO, réponses précédentes) pousse
+// sinon le modèle à recopier une ancienne réponse au lieu d'appeler ses outils.
+// Pas « fais une recherche web » : l'agent doit pouvoir choisir une skill spécialisée (ex. PNJ du wiki)
+function askAgent(message, sessionId, onStatus) {
   const agentQuestion = `${message}\n\n(Consigne : utilise en priorité une de tes compétences spécialisées `
     + `si l'une correspond à la question, sinon fais une recherche sur le web. ${DISCORD_FORMAT})`;
   return askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true });
