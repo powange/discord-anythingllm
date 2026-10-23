@@ -41,8 +41,11 @@ const QUERY_REFUSAL = (process.env.QUERY_REFUSAL_RESPONSE
 // Quand des extraits proches mais hors sujet sont trouvés, le modèle répond « je ne sais pas »
 // avec ses propres mots : on lui demande donc un mot-clé fixe, facile à détecter.
 const NO_ANSWER_MARKER = 'AUCUNE_INFO';
+// Discord n'affiche pas les tableaux Markdown : on demande des listes à la place
+const DISCORD_FORMAT = "Pas de tableau Markdown (Discord ne les affiche pas), utilise des listes.";
 const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis. `
-  + `S'ils ne contiennent pas la réponse, réponds exactement « ${NO_ANSWER_MARKER} » et rien d'autre.)`;
+  + `S'ils ne contiennent pas la réponse, réponds exactement « ${NO_ANSWER_MARKER} » et rien d'autre. `
+  + `${DISCORD_FORMAT})`;
 
 // Compare sans tenir compte de la casse, des espaces ni de la ponctuation finale
 const normalize = (s) => s.toLowerCase().replace(/\s+/g, ' ').replace(/[\s.!?…]+$/, '').trim();
@@ -65,7 +68,8 @@ function statusFromEvent(evt) {
   const type = String(evt.type || '').toLowerCase();
   const isStatus = type.includes('status') || type.includes('thought') || type.includes('thinking');
   if (!isStatus) return null;
-  const text = String(evt.content ?? evt.textResponse ?? evt.message ?? '').trim();
+  // Les étapes de l'agent arrivent en type "agentThought", texte dans le champ "thought"
+  const text = String(evt.thought ?? evt.content ?? evt.textResponse ?? evt.message ?? '').trim();
   return text || null;
 }
 
@@ -197,7 +201,7 @@ async function askWithRouting(message, sessionId, onStatus) {
   onStatus?.('Rien dans la base de connaissances, recherche sur le web…');
   // Session neuve à chaque relance : tout historique (AUCUNE_INFO, réponses précédentes) pousse
   // sinon le modèle à recopier une ancienne réponse au lieu d'appeler la recherche web.
-  const webQuestion = `Fais une recherche sur le web pour répondre à cette question : ${message}`;
+  const webQuestion = `Fais une recherche sur le web pour répondre à cette question : ${message}\n\n(${DISCORD_FORMAT})`;
   return askAnythingLLM(webQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true });
 }
 

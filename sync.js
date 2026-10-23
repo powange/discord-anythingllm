@@ -128,6 +128,17 @@ async function syncReleaseNotes(docs) {
     text: history, label: 'release-notes (historique)',
   });
 
+  // Contenu de la dernière version, présenté comme tel : le document de la version seule
+  // ne dit nulle part qu'elle est la plus récente (« contenu de la dernière mise à jour ? »)
+  const latestNotes = await api(`release-notes/${encodeURIComponent(latest.version)}`);
+  await upsertDoc(docs, {
+    docSource: `${SOT_API_URL}/release-notes/latest`,
+    title: `Dernière mise à jour de Sea of Thieves — ${label(latest)} (${latest.date})`,
+    text: `# Dernière mise à jour de Sea of Thieves : version ${label(latest)}, sortie le ${latest.date}\n\n`
+      + `Contenu de la dernière mise à jour (la plus récente) de Sea of Thieves :\n\n${latestNotes}`,
+    label: 'release-notes (dernière)',
+  });
+
   const present = new Set(docs.map((doc) => doc.docSource));
   const counts = { 'mis à jour': 0, inchangé: 0 };
   for (const [i, note] of releaseNotes.entries()) {
