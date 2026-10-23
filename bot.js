@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Partials, Events } from 'discord.js';
+import { startDocSync } from './sync.js';
 
 // --- Configuration depuis l'environnement ---
 const {
@@ -254,6 +255,7 @@ client.once(Events.ClientReady, (c) => {
   if (allowedChannels.size) {
     console.log(`   Salons en écoute totale: ${[...allowedChannels].join(', ')}`);
   }
+  startDocSync();
 });
 
 client.on(Events.MessageCreate, async (message) => {

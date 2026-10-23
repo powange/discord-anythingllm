@@ -79,6 +79,19 @@ L'agent peut enchaîner **plusieurs skills** sur une même demande (multi-step t
 
 Grâce au streaming, quand l'agent utilise des skills, le bot poste un **message de statut temporaire** (`🔧 …`) qui se met à jour au fil des skills utilisés, puis **se supprime** dès que la réponse définitive est prête. Si l'instance n'émet aucun événement de statut (mode chat simple ou version d'AnythingLLM qui ne les remonte pas via l'API), aucun message temporaire n'apparaît : seul le résultat final est envoyé.
 
+### Synchronisation d'une API externe
+
+Le bot peut alimenter la base de connaissances du workspace à partir d'une API (par défaut celle d'achievements-sot.powange.com). Avec `SOT_API_TOKEN` renseigné, il récupère au démarrage puis toutes les `SOT_SYNC_INTERVAL_HOURS` heures chaque endpoint de `SOT_API_ENDPOINTS` en Markdown (`?format=md`, jeton dans l'en-tête `Authorization`). Il le dépose comme document « SoT API — <endpoint> » via la Developer API d'AnythingLLM, l'ajoute au workspace et retire l'ancienne version. Un contenu inchangé n'est pas ré-embeddé. Les logs préfixés `📚` indiquent le résultat de chaque synchro.
+
+| Variable | Défaut | Description |
+| --- | --- | --- |
+| `SOT_API_TOKEN` | vide | Jeton de l'API. Vide = synchronisation désactivée. |
+| `SOT_API_URL` | `https://achievements-sot.powange.com/api/agent` | Base des endpoints. |
+| `SOT_API_ENDPOINTS` | `release-notes,chest-items` | Endpoints à synchroniser, séparés par des virgules. |
+| `SOT_SYNC_INTERVAL_HOURS` | `6` | Intervalle entre deux synchronisations. |
+
+N'ajoute pas un endpoint dont le contenu dépend du compte lié au jeton : tous les membres du Discord le recevraient comme une information générale.
+
 ## Lancer en local
 
 ```bash
