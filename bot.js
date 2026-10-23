@@ -54,6 +54,8 @@ const AGENT_FIRST = new RegExp([
   "qui (est|sont|était|étaient)\\b", "c'est qui", "parle[- ]moi d", "raconte",
   'pnj', 'npc', 'personnages?\\b',
   'lore\\b', 'histoire\\b', 'légende de\\b', // pas « Légende des pirates » (un titre du jeu)
+  // « le bateau de Flameheart » : navire d'un personnage (les cosmétiques disent « navire X », « de navire »)
+  "(bateau|navire|vaisseau|galion|sloop|brigantin)s? (de|du|d')",
 ].map((p) => `\\b${p}`).join('|'), 'i');
 
 // Compare sans tenir compte de la casse, des espaces ni de la ponctuation finale
