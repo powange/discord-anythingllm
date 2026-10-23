@@ -43,7 +43,7 @@ const QUERY_REFUSAL = (process.env.QUERY_REFUSAL_RESPONSE
 const NO_ANSWER_MARKER = 'AUCUNE_INFO';
 // Discord n'affiche pas les tableaux Markdown : on demande des listes à la place
 const DISCORD_FORMAT = "Pas de tableau Markdown (Discord ne les affiche pas), utilise des listes.";
-const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis. `
+const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis et des fiches éventuellement jointes. `
   + `S'ils ne contiennent pas la réponse, réponds exactement « ${NO_ANSWER_MARKER} » et rien d'autre. `
   + `${DISCORD_FORMAT})`;
 
@@ -241,7 +241,15 @@ async function askWithRouting(message, sessionId, onStatus) {
   if (DEBUG) await logVectorSearch(message);
   if (!agentFallback) return askAnythingLLM(message, sessionId, onStatus);
 
-  const answer = await askAnythingLLM(message + QUERY_INSTRUCTION, sessionId, onStatus, { mode: 'query', agent: false });
+  // Objets et emblèmes cités par leur nom exact : on joint leur fiche, car la recherche
+  // vectorielle retrouve mal un nom propre (« Au cœur du fléau » → « Cœur ardent »)
+  const known = findItemImages(message, 3);
+  const cards = known.length
+    ? `\n\nFiches de la base de connaissances :\n\n${known.map((k) => `[${k.category}]\n${k.entry}`).join('\n\n')}`
+    : '';
+  if (known.length) console.log(`  📇 fiche(s) jointe(s) : ${known.map((k) => k.name).join(', ')}`);
+
+  const answer = await askAnythingLLM(message + cards + QUERY_INSTRUCTION, sessionId, onStatus, { mode: 'query', agent: false });
   if (answer && !isQueryRefusal(answer)) return answer;
 
   console.log('  ↪ rien dans les documents → relance en @agent');

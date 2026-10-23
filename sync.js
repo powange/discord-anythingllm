@@ -192,21 +192,33 @@ const CHEST_CATEGORIES = {
 const imageSets = new Map();
 const MIN_NAME_LENGTH = 8; // évite les faux positifs sur des noms trop courts
 
-// Retire des lignes Markdown les URL d'image et identifiants techniques, en notant
-// au passage l'image de chaque élément (« - **Nom** … » suivi de « - Image : url »)
+// Clé de recherche d'un nom : minuscules, apostrophe typographique ramenée à ' (même longueur)
+const nameKey = (s) => s.toLowerCase().replace(/’/g, "'");
+
+// Retire des lignes Markdown les URL d'image et identifiants techniques, en notant au passage
+// la fiche de chaque élément (« - **Nom** … » et ses sous-lignes) : son image et son texte
 function stripImages(lines, images, category) {
   const kept = [];
-  let name = null;
+  let entry = null;
+  const flush = () => {
+    const id = entry?.image && nameKey(entry.name);
+    if (id && id.length >= MIN_NAME_LENGTH && !images.has(id)) {
+      images.set(id, { name: entry.name, image: entry.image, category, entry: entry.lines.join('\n') });
+    }
+  };
   for (const line of lines) {
+    const name = line.match(/^- \*\*(.+?)\*\*/)?.[1];
+    if (name) { flush(); entry = { name, image: null, lines: [] }; }
     const image = line.match(/^\s*- Image : (\S+)/)?.[1];
     if (image) {
-      const id = name?.toLowerCase();
-      if (id && id.length >= MIN_NAME_LENGTH && !images.has(id)) images.set(id, { name, image, category });
+      if (entry) entry.image = image;
       continue;
     }
-    name = line.match(/^- \*\*(.+?)\*\*/)?.[1] ?? name;
-    kept.push(line.replace(/ \(`[^`]+`\)/, ''));
+    const clean = line.replace(/ \(`[^`]+`\)/, '');
+    kept.push(clean);
+    entry?.lines.push(clean);
   }
+  flush();
   return kept;
 }
 
@@ -219,9 +231,10 @@ async function removeStale(docs, base, currentSources) {
   return stale.length ? `, ${stale.length} ancien(s) document(s) retiré(s)` : '';
 }
 
-// Objets et emblèmes cités dans un texte, dans leur ordre d'apparition (max `limit`)
+// Objets et emblèmes cités dans un texte, dans leur ordre d'apparition (max `limit`) :
+// { name, image, category, entry } — sert aux images des réponses et aux fiches jointes aux questions
 export function findItemImages(text, limit = 4) {
-  const lower = text.toLowerCase();
+  const lower = nameKey(text);
   const matches = [];
   for (const [name, item] of [...imageSets.values()].flatMap((set) => [...set])) {
     // Toutes les occurrences : la première peut être incluse dans un nom plus long

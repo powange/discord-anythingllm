@@ -87,7 +87,11 @@ L'endpoint `release-notes` est traité à part : le bot lit l'index JSON des ver
 
 L'endpoint `chest-items` est découpé en un document par sous-catégorie (ex. « Navire › Wheel »), précédé d'une introduction expliquant ce qu'est le coffre du pirate (pour que le modèle ne pense pas aux coffres au trésor). Les lignes d'image et les identifiants techniques sont retirés : ils alourdissaient l'indexation sans aider la recherche. Le bot garde en revanche en mémoire la correspondance nom d'objet → image : quand une réponse cite un objet du coffre par son nom exact, il joint son image (4 au maximum) sous forme d'encart Discord.
 
-L'endpoint `recommendations` (les emblèmes du jeu) donne un document « sommaire » des factions et campagnes, puis un document par campagne via `recommendations/<faction>/<campagne>`, avec une introduction expliquant ce que sont les emblèmes. Leurs images sont jointes sur Discord comme celles du coffre. Les logs préfixés `📚` indiquent le résultat de chaque synchro.
+L'endpoint `recommendations` (les emblèmes du jeu) donne un document « sommaire » des factions et campagnes, puis un document par campagne via `recommendations/<faction>/<campagne>`, avec une introduction expliquant ce que sont les emblèmes. Leurs images sont jointes sur Discord comme celles du coffre.
+
+Quand une question cite un objet du coffre ou un emblème par son nom exact, le bot joint sa fiche (catégorie, description, coût, prérequis ou paliers) à la question envoyée en mode query : la recherche vectorielle retrouve mal un nom propre précis. Les logs le signalent par une ligne `📇`.
+
+Le modèle d'embedding d'AnythingLLM doit être multilingue : le modèle par défaut, all-MiniLM-L6-v2, est entraîné sur l'anglais et rend la recherche quasi aléatoire sur des données en français (scores autour de 0,05 avec `DEBUG=true`). Changer de modèle oblige à tout réindexer : retirer les documents du workspace puis redémarrer le bot. Les logs préfixés `📚` indiquent le résultat de chaque synchro.
 
 | Variable | Défaut | Description |
 | --- | --- | --- |
