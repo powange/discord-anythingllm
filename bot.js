@@ -387,4 +387,10 @@ client.on(Events.MessageCreate, async (message) => {
 // Filets de sécurité : on log sans faire crasher le process
 process.on('unhandledRejection', (err) => console.error('Rejet non géré:', err));
 
-client.login(DISCORD_TOKEN);
+// Connexion initiale impossible (ex. gateway Discord en 503) : on quitte pour que Docker
+// (restart: unless-stopped) relance le conteneur, au lieu de rester allumé sans être connecté.
+// Une fois connecté, discord.js gère seul les reconnexions.
+client.login(DISCORD_TOKEN).catch((err) => {
+  console.error('❌ Connexion à Discord impossible, arrêt pour redémarrage:', err.message);
+  process.exit(1);
+});
