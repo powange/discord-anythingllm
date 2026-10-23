@@ -1,0 +1,43 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Mintplex-Labs/anything-llm/refs/heads/master/server/utils/agents/imported-manifest.schema.json",
+  "active": true,
+  "hubId": "sot-wiki",
+  "name": "Wiki Sea of Thieves",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Cherche dans le wiki Sea of Thieves (seaofthieves.wiki.gg) et renvoie le contenu de la page la plus pertinente : personnages (PNJ), navires du lore, îles, avant-postes, quêtes, Tall Tales, créatures, événements, objets, mécaniques de jeu. Le wiki est en anglais : la recherche doit être formulée en anglais (ex. 'Flameheart', 'Burning Blade', 'Ferry of the Damned'). À utiliser pour toute question sur l'univers, l'histoire ou le fonctionnement du jeu. by powange",
+  "author": "powange",
+  "license": "MIT",
+  "examples": [
+    {
+      "prompt": "Quel est le bateau de Flameheart ?",
+      "call": "{\"query\": \"Flameheart ship\"}"
+    },
+    {
+      "prompt": "Parle-moi du Ferry of the Damned",
+      "call": "{\"query\": \"Ferry of the Damned\"}"
+    },
+    {
+      "prompt": "Où se trouve l'avant-poste de Golden Sands ?",
+      "call": "{\"query\": \"Golden Sands Outpost\"}"
+    },
+    {
+      "prompt": "Que raconte la section Lore de la page Burning Blade ?",
+      "call": "{\"query\": \"Burning Blade\", \"section\": \"Lore\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "query": {
+        "description": "Mots-clés de recherche ou titre exact d'une page du wiki, EN ANGLAIS (ex. 'Flameheart', 'Burning Blade', 'Kraken').",
+        "type": "string"
+      },
+      "section": {
+        "description": "Optionnel : nom d'une section de la page à lire en entier (ex. 'Lore', 'History', 'Trivia') quand le contenu renvoyé était tronqué.",
+        "type": "string"
+      }
+    }
+  },
+  "imported": true
+}
