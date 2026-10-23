@@ -150,7 +150,14 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
 
         const status = statusFromEvent(evt);
         if (status) onStatus?.(status);
-        else if (typeof evt.textResponse === 'string') answer += evt.textResponse; // accumule la réponse
+        else if (typeof evt.textResponse === 'string') {
+          const isChunk = String(evt.type || '').toLowerCase().includes('chunk');
+          if (DEBUG && !isChunk) console.log(`  event complet (${evt.type}): ${evt.textResponse.length} car.`);
+          // Un morceau s'ajoute ; un événement complet (l'agent renvoie tout le texte à la fin) remplace.
+          // Garde-fou : un morceau identique au texte déjà reçu est un doublon, on l'ignore.
+          if (!isChunk) answer = evt.textResponse;
+          else if (!(answer && evt.textResponse === answer)) answer += evt.textResponse;
+        }
 
         if (evt.close === true) { closed = true; break; }
       }
@@ -184,7 +191,10 @@ async function askWithRouting(message, sessionId, onStatus) {
 
   console.log('  ↪ rien dans les documents → relance en @agent');
   onStatus?.('Rien dans la base de connaissances, recherche sur le web…');
-  return askAnythingLLM(message, sessionId, onStatus, { mode: 'chat', agent: true });
+  // Session distincte : l'historique du passage query (AUCUNE_INFO, anciens « je ne sais pas »)
+  // pousse sinon le modèle à recopier un refus au lieu d'appeler la recherche web.
+  const webQuestion = `Fais une recherche sur le web pour répondre à cette question : ${message}`;
+  return askAnythingLLM(webQuestion, `${sessionId}-agent`, onStatus, { mode: 'chat', agent: true });
 }
 
 // --- Découpe des réponses longues ---
