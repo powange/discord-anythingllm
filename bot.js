@@ -215,8 +215,30 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
   return result;
 }
 
+// Diagnostic (DEBUG) : extraits que la recherche vectorielle ramène pour la question, avec leur
+// score et leur document, sans appeler le modèle. Montre si l'échec vient de la recherche elle-même.
+async function logVectorSearch(question) {
+  try {
+    const res = await fetch(`${ANYTHINGLLM_URL}/api/v1/workspace/${ANYTHINGLLM_WORKSPACE}/vector-search`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ANYTHINGLLM_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: question, topN: 6 }),
+    });
+    const { results = [], message } = await res.json();
+    console.log(`  🔍 recherche vectorielle: ${results.length} extrait(s)${message ? ` (${message})` : ''}`);
+    for (const r of results) {
+      const score = typeof r.score === 'number' ? r.score.toFixed(3) : '?';
+      const excerpt = String(r.text || '').replace(/\s+/g, ' ').slice(0, 90);
+      console.log(`     ${score} | ${r.metadata?.title ?? '?'} | ${excerpt}`);
+    }
+  } catch (err) {
+    console.warn('  🔍 recherche vectorielle impossible:', err.message);
+  }
+}
+
 // Routage à deux temps : documents d'abord (mode query), agent (recherche web) ensuite.
 async function askWithRouting(message, sessionId, onStatus) {
+  if (DEBUG) await logVectorSearch(message);
   if (!agentFallback) return askAnythingLLM(message, sessionId, onStatus);
 
   const answer = await askAnythingLLM(message + QUERY_INSTRUCTION, sessionId, onStatus, { mode: 'query', agent: false });
