@@ -25,7 +25,8 @@ Chaque salon utilise un `sessionId` distinct (`discord-<channelId>`) : chaque sa
 | `ANYTHINGLLM_API_KEY`   |     ✅      |   —    | Clé API AnythingLLM.                                                              |
 | `ANYTHINGLLM_WORKSPACE` |     ✅      |   —    | Slug du workspace (visible dans son URL).                                         |
 | `ANYTHINGLLM_MODE`      |     ❌      | `chat`  | `chat` (conversationnel) ou `query` (strictement factuel). `agent` n'est **pas** valide ici. |
-| `ANYTHINGLLM_AGENT`     |     ❌      | `false` | `true` pour préfixer chaque question par `@agent` (déclenche les skills/tools/MCP). |
+| `ANYTHINGLLM_AGENT`     |     ❌      | `false` | `true` pour préfixer chaque question par `@agent` (déclenche les skills/tools/MCP). `fallback` : documents d'abord, `@agent` seulement si rien n'est trouvé. |
+| `QUERY_REFUSAL_RESPONSE` | ❌ | réponse par défaut d'AnythingLLM | Mode `fallback` : texte de refus du mode query, à renseigner seulement s'il a été personnalisé dans le workspace. |
 | `ALLOWED_CHANNEL_IDS`   |     ❌      |  vide   | IDs de salons (séparés par des virgules) où répondre à tous les messages.         |
 
 Le bot **échoue proprement au démarrage** si une variable obligatoire manque.
@@ -69,9 +70,10 @@ Il accumule les morceaux de texte (`textResponse`) au fil du flux pour composer 
 Le paramètre `mode` de l'API n'accepte que `chat` et `query` : **`agent` n'y est pas une valeur valide**. Pour déclencher l'agent AnythingLLM (skills, tools, MCP), deux options :
 
 - **`ANYTHINGLLM_AGENT=true`** : le bot préfixe chaque question par `@agent`, ce qui invoque l'agent via la Developer API (`ANYTHINGLLM_MODE` reste `chat` ou `query`).
+- **`ANYTHINGLLM_AGENT=fallback`** : routage à deux temps. Le bot interroge d'abord en mode `query` (réponse uniquement depuis les documents). Si AnythingLLM répond par son message de refus (aucun document pertinent), le bot rejoue la même question préfixée par `@agent` — par exemple pour déclencher la skill *Web Search*. Le message de refus détecté est celui par défaut d'AnythingLLM ; s'il a été personnalisé dans le workspace (*Query mode refusal response*), recopie-le dans `QUERY_REFUSAL_RESPONSE`.
 - **Réglage du workspace** : sur un workspace en *Agent mode* (par défaut pour les workspaces récents) avec *native tool calling* supporté par ton provider LLM, l'agent tourne automatiquement — inutile de toucher à `ANYTHINGLLM_AGENT`.
 
-L'agent peut enchaîner **plusieurs skills** sur une même demande (multi-step tool calling). Pense à autoriser les tool calls côté serveur AnythingLLM via `AGENT_AUTO_APPROVED_SKILLS` (liste de skill-ids, ou `<all>`), sinon les skills demandant une approbation restent bloqués faute d'interface pour approuver.
+L'agent peut enchaîner **plusieurs skills** sur une même demande (multi-step tool calling). Le bot n'a pas d'interface pour approuver un tool call : privilégie des skills qui s'exécutent sans approbation (c'est le cas de *Web Search*). Avant de brancher le bot, teste la question préfixée par `@agent` directement dans l'interface d'AnythingLLM.
 
 ### Statut « réflexion » éphémère
 
@@ -129,7 +131,7 @@ curl -N -X POST "$ANYTHINGLLM_URL/api/v1/workspace/$ANYTHINGLLM_WORKSPACE/stream
   -d '{"message":"bonjour","mode":"chat","sessionId":"test"}'
 ```
 
-Si `curl` ne renvoie rien non plus, le problème est côté AnythingLLM (workspace, modèle non configuré, agent en attente d'approbation d'un tool call…), pas côté bot. En mode agent, pense à `AGENT_AUTO_APPROVED_SKILLS` (voir ci-dessus).
+Si `curl` ne renvoie rien non plus, le problème est côté AnythingLLM (workspace, modèle non configuré, agent en attente d'approbation d'un tool call…), pas côté bot. En mode agent, teste d'abord `@agent` dans l'interface d'AnythingLLM : un modèle qui ne se charge pas (mémoire insuffisante côté LM Studio) ou qui gère mal les tool calls y apparaît tout de suite.
 
 ## Licence
 

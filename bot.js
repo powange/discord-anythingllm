@@ -26,7 +26,19 @@ const allowedChannels = new Set(
 );
 
 // Mode agent : préfixe la question par @agent pour déclencher skills/tools/MCP
+//   'true'     → toujours @agent
+//   'fallback' → d'abord en mode query (documents seuls), puis @agent si rien trouvé
 const agentEnabled = ANYTHINGLLM_AGENT === 'true';
+const agentFallback = ANYTHINGLLM_AGENT === 'fallback';
+
+// Réponse renvoyée par AnythingLLM en mode query quand aucun document ne correspond.
+// Doit correspondre au "Query mode refusal response" du workspace s'il a été personnalisé.
+const QUERY_REFUSAL = (process.env.QUERY_REFUSAL_RESPONSE
+  || 'There is no relevant information in this workspace to answer your query.').trim();
+
+// Compare sans tenir compte de la casse, des espaces ni de la ponctuation finale
+const normalize = (s) => s.toLowerCase().replace(/\s+/g, ' ').replace(/[\s.!?…]+$/, '').trim();
+const isQueryRefusal = (answer) => normalize(answer) === normalize(QUERY_REFUSAL);
 
 // Diagnostic & robustesse
 const DEBUG = process.env.DEBUG === 'true';
@@ -50,10 +62,10 @@ function statusFromEvent(evt) {
 
 // Interroge le workspace en streaming (SSE) et renvoie le texte final.
 // onStatus(text) est appelé pour chaque activité de skill remontée par l'agent.
-async function askAnythingLLM(message, sessionId, onStatus) {
+async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM_MODE, agent = agentEnabled } = {}) {
   const url = `${ANYTHINGLLM_URL}/api/v1/workspace/${ANYTHINGLLM_WORKSPACE}/stream-chat`;
   // @agent déclenche l'agent AnythingLLM via la Developer API (mode reste chat/query)
-  const payload = agentEnabled ? `@agent ${message}` : message;
+  const payload = agent ? `@agent ${message}` : message;
 
   // Coupe-circuit : abandonne si aucune donnée n'arrive pendant STREAM_IDLE_MS
   const controller = new AbortController();
@@ -66,7 +78,7 @@ async function askAnythingLLM(message, sessionId, onStatus) {
   };
 
   const started = Date.now();
-  console.log(`→ stream-chat | mode=${ANYTHINGLLM_MODE} agent=${agentEnabled} | q="${message.slice(0, 80)}"`);
+  console.log(`→ stream-chat | mode=${mode} agent=${agent} | q="${message.slice(0, 80)}"`);
 
   arm();
   let res;
@@ -78,7 +90,7 @@ async function askAnythingLLM(message, sessionId, onStatus) {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
       },
-      body: JSON.stringify({ message: payload, mode: ANYTHINGLLM_MODE, sessionId }),
+      body: JSON.stringify({ message: payload, mode, sessionId }),
       signal: controller.signal,
     });
   } catch (err) {
@@ -155,6 +167,18 @@ async function askAnythingLLM(message, sessionId, onStatus) {
   return result;
 }
 
+// Routage à deux temps : documents d'abord (mode query), agent (recherche web) ensuite.
+async function askWithRouting(message, sessionId, onStatus) {
+  if (!agentFallback) return askAnythingLLM(message, sessionId, onStatus);
+
+  const answer = await askAnythingLLM(message, sessionId, onStatus, { mode: 'query', agent: false });
+  if (answer && !isQueryRefusal(answer)) return answer;
+
+  console.log('  ↪ rien dans les documents → relance en @agent');
+  onStatus?.('Rien dans la base de connaissances, recherche sur le web…');
+  return askAnythingLLM(message, sessionId, onStatus, { mode: 'chat', agent: true });
+}
+
 // --- Découpe des réponses longues ---
 // Coupe de préférence sur les sauts de ligne, sans dépasser la limite
 function splitMessage(text, limit = DISCORD_LIMIT) {
@@ -207,7 +231,7 @@ const client = new Client({
 client.once(Events.ClientReady, (c) => {
   console.log(`✅ Connecté en tant que ${c.user.tag}`);
   console.log(
-    `   Workspace: ${ANYTHINGLLM_WORKSPACE} | Mode: ${ANYTHINGLLM_MODE}${agentEnabled ? ' | Agent: on' : ''}`,
+    `   Workspace: ${ANYTHINGLLM_WORKSPACE} | Mode: ${agentFallback ? 'query → @agent' : ANYTHINGLLM_MODE}${agentEnabled ? ' | Agent: on' : ''}`,
   );
   if (allowedChannels.size) {
     console.log(`   Salons en écoute totale: ${[...allowedChannels].join(', ')}`);
@@ -254,7 +278,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   try {
     const answer = await withTyping(message.channel, () =>
-      askAnythingLLM(question, sessionId, showStatus),
+      askWithRouting(question, sessionId, showStatus),
     );
 
     // La réponse est prête : on retire le message de statut éphémère
