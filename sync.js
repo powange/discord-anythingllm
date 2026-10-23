@@ -13,7 +13,7 @@ const {
   SOT_SYNC_INTERVAL_HOURS = '6',
 } = process.env;
 
-const DOC_PREFIX = 'SoT API — '; // préfixe des titres : identifie nos documents dans le workspace
+const DOC_PREFIX = 'SoT API — '; // préfixe des titres (AnythingLLM le transforme en nom de fichier)
 const lastHashes = new Map(); // endpoint → empreinte du dernier contenu envoyé
 
 // Appel à la Developer API d'AnythingLLM
@@ -27,17 +27,24 @@ async function llm(method, path, body) {
   return res.json().catch(() => ({}));
 }
 
-// Documents du workspace portant ce titre : { docpath, hash } (hash lu dans la description)
-async function findDocs(title) {
+// Documents du workspace issus de cette source : { docpath, hash } (hash lu dans la description).
+// On identifie par docSource : AnythingLLM le conserve tel quel, alors qu'il réécrit le titre.
+async function findDocs(docSource) {
   const { workspace } = await llm('GET', `/workspace/${ANYTHINGLLM_WORKSPACE}`);
   const ws = Array.isArray(workspace) ? workspace[0] : workspace;
   return (ws?.documents ?? []).flatMap((doc) => {
     let meta;
     try { meta = JSON.parse(doc.metadata || '{}'); } catch { return []; }
-    if (meta.title !== title) return [];
+    if (meta.docSource !== docSource) return [];
     const hash = String(meta.description || '').match(/^sha256:([0-9a-f]{64})$/)?.[1] ?? null;
     return [{ docpath: doc.docpath, hash }];
   });
+}
+
+// Retire des documents du workspace puis du stockage (My Documents)
+async function removeDocs(docpaths) {
+  await llm('POST', `/workspace/${ANYTHINGLLM_WORKSPACE}/update-embeddings`, { adds: [], deletes: docpaths });
+  await llm('DELETE', '/system/remove-documents', { names: docpaths }).catch(() => {});
 }
 
 async function syncEndpoint(endpoint) {
@@ -52,18 +59,24 @@ async function syncEndpoint(endpoint) {
   if (lastHashes.get(endpoint) === hash) return 'inchangé';
 
   const title = `${DOC_PREFIX}${endpoint}`;
-  const existing = await findDocs(title);
-  // Après un redémarrage, l'empreinte stockée dans AnythingLLM évite de tout ré-embedder
-  if (existing.length === 1 && existing[0].hash === hash) {
+  const docSource = `${SOT_API_URL}/${endpoint}`;
+  const existing = await findDocs(docSource);
+
+  // Après un redémarrage, l'empreinte stockée dans AnythingLLM évite de tout ré-embedder.
+  // Si une version à jour existe déjà, on la garde et on retire seulement les doublons.
+  const current = existing.find((doc) => doc.hash === hash);
+  if (current) {
+    const extras = existing.filter((doc) => doc !== current).map((doc) => doc.docpath);
+    if (extras.length) await removeDocs(extras);
     lastHashes.set(endpoint, hash);
-    return 'inchangé (déjà dans le workspace)';
+    return `inchangé (déjà dans le workspace${extras.length ? `, ${extras.length} doublon(s) retiré(s)` : ''})`;
   }
   const olds = existing.map((doc) => doc.docpath);
 
   // Nouveau document d'abord, puis échange dans le workspace : pas de trou entre les deux versions
   const { documents } = await llm('POST', '/document/raw-text', {
     textContent: text,
-    metadata: { title, docSource: `${SOT_API_URL}/${endpoint}`, description: `sha256:${hash}` },
+    metadata: { title, docSource, description: `sha256:${hash}` },
   });
   const location = documents?.[0]?.location;
   if (!location) throw new Error(`raw-text ${endpoint}: pas d'emplacement renvoyé`);
