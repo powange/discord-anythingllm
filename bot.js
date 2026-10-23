@@ -150,7 +150,10 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
         if (evt.error) throw new Error(String(evt.error));
 
         const status = statusFromEvent(evt);
-        if (status) onStatus?.(status);
+        if (status) {
+          console.log(`  🔧 ${status.slice(0, 200)}`); // trace des skills de l'agent (ex. recherche web)
+          onStatus?.(status);
+        }
         else if (typeof evt.textResponse === 'string') {
           const isChunk = String(evt.type || '').toLowerCase().includes('chunk');
           if (DEBUG && !isChunk) console.log(`  event complet (${evt.type}): ${evt.textResponse.length} car.`);
@@ -192,10 +195,10 @@ async function askWithRouting(message, sessionId, onStatus) {
 
   console.log('  ↪ rien dans les documents → relance en @agent');
   onStatus?.('Rien dans la base de connaissances, recherche sur le web…');
-  // Session distincte : l'historique du passage query (AUCUNE_INFO, anciens « je ne sais pas »)
-  // pousse sinon le modèle à recopier un refus au lieu d'appeler la recherche web.
+  // Session neuve à chaque relance : tout historique (AUCUNE_INFO, réponses précédentes) pousse
+  // sinon le modèle à recopier une ancienne réponse au lieu d'appeler la recherche web.
   const webQuestion = `Fais une recherche sur le web pour répondre à cette question : ${message}`;
-  return askAnythingLLM(webQuestion, `${sessionId}-agent`, onStatus, { mode: 'chat', agent: true });
+  return askAnythingLLM(webQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true });
 }
 
 // --- Découpe des réponses longues ---
