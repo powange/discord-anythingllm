@@ -87,7 +87,9 @@ function formatStatus(raw) {
   if (tool) {
     let args = {};
     try { args = JSON.parse(tool[2] || '{}'); } catch { /* arguments illisibles : libellé seul */ }
-    const detail = args.query ?? args.url ?? args.content ?? args.document_filename;
+    // Arguments connus des skills intégrées, sinon le premier argument texte (skills personnalisées)
+    const detail = args.query ?? args.url ?? args.content ?? args.document_filename
+      ?? Object.values(args).find((v) => typeof v === 'string' && v.trim());
     const label = TOOL_LABELS[tool[1]] ?? `🔧 Outil ${tool[1]}`;
     return detail ? `${label} : « ${String(detail).slice(0, 200)} »` : `${label}…`;
   }
@@ -253,11 +255,13 @@ async function askWithRouting(message, sessionId, onStatus) {
   if (answer && !isQueryRefusal(answer)) return answer;
 
   console.log('  ↪ rien dans les documents → relance en @agent');
-  onStatus?.('📚 Rien dans la base de connaissances, recherche sur le web…');
+  onStatus?.('📚 Rien dans la base de connaissances, je cherche ailleurs…');
   // Session neuve à chaque relance : tout historique (AUCUNE_INFO, réponses précédentes) pousse
   // sinon le modèle à recopier une ancienne réponse au lieu d'appeler la recherche web.
-  const webQuestion = `Fais une recherche sur le web pour répondre à cette question : ${message}\n\n(${DISCORD_FORMAT})`;
-  return askAnythingLLM(webQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true });
+  // Pas « fais une recherche web » : l'agent doit pouvoir choisir une skill spécialisée (ex. PNJ du wiki)
+  const agentQuestion = `${message}\n\n(Consigne : utilise en priorité une de tes compétences spécialisées `
+    + `si l'une correspond à la question, sinon fais une recherche sur le web. ${DISCORD_FORMAT})`;
+  return askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true });
 }
 
 // --- Découpe des réponses longues ---
