@@ -81,7 +81,10 @@ async function syncAll(endpoints) {
 
 // Lance une synchronisation immédiate puis périodique (désactivée sans SOT_API_TOKEN)
 export function startDocSync() {
-  if (!SOT_API_TOKEN) return;
+  if (!SOT_API_TOKEN) {
+    console.log('📚 Synchro API désactivée (SOT_API_TOKEN vide)');
+    return;
+  }
   const endpoints = SOT_API_ENDPOINTS.split(',').map((e) => e.trim()).filter(Boolean);
   const hours = Number(SOT_SYNC_INTERVAL_HOURS) || 6;
   console.log(`📚 Synchro API → workspace: ${endpoints.join(', ')} toutes les ${hours} h`);
