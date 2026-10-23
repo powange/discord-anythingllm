@@ -27,15 +27,17 @@ async function llm(method, path, body) {
   return res.json().catch(() => ({}));
 }
 
-// Chemins (docpath) des documents du workspace portant ce titre
-async function findDocpaths(title) {
+// Documents du workspace portant ce titre : { docpath, hash } (hash lu dans la description)
+async function findDocs(title) {
   const { workspace } = await llm('GET', `/workspace/${ANYTHINGLLM_WORKSPACE}`);
   const ws = Array.isArray(workspace) ? workspace[0] : workspace;
-  return (ws?.documents ?? [])
-    .filter((doc) => {
-      try { return JSON.parse(doc.metadata || '{}').title === title; } catch { return false; }
-    })
-    .map((doc) => doc.docpath);
+  return (ws?.documents ?? []).flatMap((doc) => {
+    let meta;
+    try { meta = JSON.parse(doc.metadata || '{}'); } catch { return []; }
+    if (meta.title !== title) return [];
+    const hash = String(meta.description || '').match(/^sha256:([0-9a-f]{64})$/)?.[1] ?? null;
+    return [{ docpath: doc.docpath, hash }];
+  });
 }
 
 async function syncEndpoint(endpoint) {
@@ -50,12 +52,18 @@ async function syncEndpoint(endpoint) {
   if (lastHashes.get(endpoint) === hash) return 'inchangé';
 
   const title = `${DOC_PREFIX}${endpoint}`;
-  const olds = await findDocpaths(title);
+  const existing = await findDocs(title);
+  // Après un redémarrage, l'empreinte stockée dans AnythingLLM évite de tout ré-embedder
+  if (existing.length === 1 && existing[0].hash === hash) {
+    lastHashes.set(endpoint, hash);
+    return 'inchangé (déjà dans le workspace)';
+  }
+  const olds = existing.map((doc) => doc.docpath);
 
   // Nouveau document d'abord, puis échange dans le workspace : pas de trou entre les deux versions
   const { documents } = await llm('POST', '/document/raw-text', {
     textContent: text,
-    metadata: { title, docSource: `${SOT_API_URL}/${endpoint}` },
+    metadata: { title, docSource: `${SOT_API_URL}/${endpoint}`, description: `sha256:${hash}` },
   });
   const location = documents?.[0]?.location;
   if (!location) throw new Error(`raw-text ${endpoint}: pas d'emplacement renvoyé`);
@@ -86,7 +94,8 @@ export function startDocSync() {
     return;
   }
   const endpoints = SOT_API_ENDPOINTS.split(',').map((e) => e.trim()).filter(Boolean);
-  const hours = Number(SOT_SYNC_INTERVAL_HOURS) || 6;
+  // Plafond à 24 jours : au-delà, setInterval déborde (32 bits) et tourne en boucle
+  const hours = Math.min(Number(SOT_SYNC_INTERVAL_HOURS) || 6, 24 * 24);
   console.log(`📚 Synchro API → workspace: ${endpoints.join(', ')} toutes les ${hours} h`);
   syncAll(endpoints);
   setInterval(() => syncAll(endpoints), hours * 3600 * 1000);
