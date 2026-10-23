@@ -85,16 +85,18 @@ Le bot peut alimenter la base de connaissances du workspace à partir d'une API 
 
 L'endpoint `release-notes` est traité à part : le bot lit l'index JSON des versions et crée un document « historique » (qui commence par la dernière version et sa date), puis un document par version via `release-notes/<version>`. Les versions déjà présentes ne sont plus retéléchargées, sauf les 3 plus récentes, revérifiées à chaque tour. Un seul gros document noyait les questions du type « quelle est la dernière version ? » parmi des milliers d'extraits. Un document « Dernière mise à jour » reprend aussi le contenu de la version la plus récente.
 
-L'endpoint `chest-items` est découpé en un document par sous-catégorie (ex. « Navire › Wheel »), précédé d'une introduction expliquant ce qu'est le coffre du pirate (pour que le modèle ne pense pas aux coffres au trésor). Les lignes d'image et les identifiants techniques sont retirés : ils alourdissaient l'indexation sans aider la recherche. Le bot garde en revanche en mémoire la correspondance nom d'objet → image : quand une réponse cite un objet du coffre par son nom exact, il joint son image (4 au maximum) sous forme d'encart Discord. Les logs préfixés `📚` indiquent le résultat de chaque synchro.
+L'endpoint `chest-items` est découpé en un document par sous-catégorie (ex. « Navire › Wheel »), précédé d'une introduction expliquant ce qu'est le coffre du pirate (pour que le modèle ne pense pas aux coffres au trésor). Les lignes d'image et les identifiants techniques sont retirés : ils alourdissaient l'indexation sans aider la recherche. Le bot garde en revanche en mémoire la correspondance nom d'objet → image : quand une réponse cite un objet du coffre par son nom exact, il joint son image (4 au maximum) sous forme d'encart Discord.
+
+L'endpoint `recommendations` (les emblèmes du jeu) donne un document « sommaire » des factions et campagnes, puis un document par campagne via `recommendations/<faction>/<campagne>`, avec une introduction expliquant ce que sont les emblèmes. Leurs images sont jointes sur Discord comme celles du coffre. Les logs préfixés `📚` indiquent le résultat de chaque synchro.
 
 | Variable | Défaut | Description |
 | --- | --- | --- |
 | `SOT_API_TOKEN` | vide | Jeton de l'API. Vide = synchronisation désactivée. |
 | `SOT_API_URL` | `https://achievements-sot.powange.com/api/agent` | Base des endpoints. |
-| `SOT_API_ENDPOINTS` | `release-notes,chest-items` | Endpoints à synchroniser, séparés par des virgules. |
+| `SOT_API_ENDPOINTS` | `release-notes,chest-items,recommendations` | Endpoints à synchroniser, séparés par des virgules. |
 | `SOT_SYNC_INTERVAL_HOURS` | `6` | Intervalle entre deux synchronisations. |
 
-N'ajoute pas un endpoint dont le contenu dépend du compte lié au jeton : tous les membres du Discord le recevraient comme une information générale.
+N'ajoute pas un endpoint dont le contenu dépend du compte lié au jeton : tous les membres du Discord le recevraient comme une information générale. Les trois endpoints par défaut sont des catalogues communs à tous les joueurs.
 
 ## Lancer en local
 

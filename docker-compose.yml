@@ -20,7 +20,7 @@ services:
       STREAM_IDLE_TIMEOUT_MS: ${STREAM_IDLE_TIMEOUT_MS:-60000}
       SOT_API_TOKEN: ${SOT_API_TOKEN:-}
       SOT_API_URL: ${SOT_API_URL:-https://achievements-sot.powange.com/api/agent}
-      SOT_API_ENDPOINTS: ${SOT_API_ENDPOINTS:-release-notes,chest-items}
+      SOT_API_ENDPOINTS: ${SOT_API_ENDPOINTS:-release-notes,chest-items,recommendations}
       SOT_SYNC_INTERVAL_HOURS: ${SOT_SYNC_INTERVAL_HOURS:-6}
 
 networks:

@@ -9,7 +9,7 @@ const {
   ANYTHINGLLM_WORKSPACE,
   SOT_API_URL = 'https://achievements-sot.powange.com/api/agent',
   SOT_API_TOKEN,
-  SOT_API_ENDPOINTS = 'release-notes,chest-items',
+  SOT_API_ENDPOINTS = 'release-notes,chest-items,recommendations',
   SOT_SYNC_INTERVAL_HOURS = '6',
 } = process.env;
 
@@ -186,17 +186,44 @@ const CHEST_CATEGORIES = {
   Pets: 'Animaux de compagnie',
 };
 
-// Images des objets du coffre : nom en minuscules → { name, image, category }.
+// Images par source (coffre, emblèmes) : nom en minuscules → { name, image, category }.
 // Les URL restent hors des documents (bruit pour l'indexation, mal recopiées par le modèle) :
-// c'est le bot qui joint les images des objets cités dans une réponse.
-let itemImages = new Map();
+// c'est le bot qui joint les images des objets et emblèmes cités dans une réponse.
+const imageSets = new Map();
 const MIN_NAME_LENGTH = 8; // évite les faux positifs sur des noms trop courts
 
-// Objets du coffre cités dans un texte, dans leur ordre d'apparition (max `limit`)
+// Retire des lignes Markdown les URL d'image et identifiants techniques, en notant
+// au passage l'image de chaque élément (« - **Nom** … » suivi de « - Image : url »)
+function stripImages(lines, images, category) {
+  const kept = [];
+  let name = null;
+  for (const line of lines) {
+    const image = line.match(/^\s*- Image : (\S+)/)?.[1];
+    if (image) {
+      const id = name?.toLowerCase();
+      if (id && id.length >= MIN_NAME_LENGTH && !images.has(id)) images.set(id, { name, image, category });
+      continue;
+    }
+    name = line.match(/^- \*\*(.+?)\*\*/)?.[1] ?? name;
+    kept.push(line.replace(/ \(`[^`]+`\)/, ''));
+  }
+  return kept;
+}
+
+// Retire les documents d'une source qui ne sont plus produits (ancien document unique, sections disparues)
+async function removeStale(docs, base, currentSources) {
+  const stale = docs
+    .filter((doc) => doc.docSource === base || (doc.docSource?.startsWith(`${base}/`) && !currentSources.has(doc.docSource)))
+    .map((doc) => doc.docpath);
+  if (stale.length) await removeDocs(stale);
+  return stale.length ? `, ${stale.length} ancien(s) document(s) retiré(s)` : '';
+}
+
+// Objets et emblèmes cités dans un texte, dans leur ordre d'apparition (max `limit`)
 export function findItemImages(text, limit = 4) {
   const lower = text.toLowerCase();
   const matches = [];
-  for (const [name, item] of itemImages) {
+  for (const [name, item] of [...imageSets.values()].flatMap((set) => [...set])) {
     // Toutes les occurrences : la première peut être incluse dans un nom plus long
     for (let start = lower.indexOf(name); start !== -1; start = lower.indexOf(name, start + 1)) {
       matches.push({ ...item, start, end: start + name.length });
@@ -215,11 +242,9 @@ export function findItemImages(text, limit = 4) {
 // le « coffre » (sinon le modèle comprend « coffres au trésor »). Images et identifiants retirés.
 async function syncChestItems(docs) {
   const md = await api('chest-items');
-  const sections = new Map(); // "Catégorie/Sous-catégorie" → lignes d'objets
-  const images = new Map();
+  const sections = new Map(); // "Catégorie/Sous-catégorie" → lignes brutes
   let category = null;
   let key = null;
-  let itemName = null;
   for (const line of md.split('\n')) {
     if (line.startsWith('## ')) { category = line.slice(3).trim(); key = null; continue; }
     if (line.startsWith('### ') && category) {
@@ -227,26 +252,17 @@ async function syncChestItems(docs) {
       sections.set(key, []);
       continue;
     }
-    if (!key || !line.trim()) continue;
-    const image = line.match(/^\s*- Image : (\S+)/)?.[1];
-    if (image) {
-      const id = itemName?.toLowerCase();
-      if (id && id.length >= MIN_NAME_LENGTH && !images.has(id)) {
-        images.set(id, { name: itemName, image, category: `${CHEST_CATEGORIES[category] ?? category} › ${key.split('/')[1]}` });
-      }
-      continue;
-    }
-    itemName = line.match(/^- \*\*(.+?)\*\*/)?.[1] ?? itemName;
-    sections.get(key).push(line.replace(/ \(`[^`]+`\)/, ''));
+    if (key && line.trim()) sections.get(key).push(line);
   }
-  if (images.size) itemImages = images;
   if (!sections.size) throw new Error('API chest-items: aucune section reconnue (format Markdown modifié ?)');
 
   const base = `${SOT_API_URL}/chest-items`;
+  const images = new Map();
   const counts = { 'mis à jour': 0, inchangé: 0 };
-  for (const [section, lines] of sections) {
+  for (const [section, raw] of sections) {
     const [cat, sub] = section.split('/');
     const catLabel = CHEST_CATEGORIES[cat] ?? cat;
+    const lines = stripImages(raw, images, `${catLabel} › ${sub}`);
     const items = lines.filter((l) => l.startsWith('- ')).length;
     const text = [
       `# Coffre du pirate de Sea of Thieves — ${catLabel} › ${sub}`,
@@ -268,19 +284,76 @@ async function syncChestItems(docs) {
     }
   }
 
-  // Ancien document unique et sous-catégories disparues de l'API
-  const current = new Set([...sections.keys()].map((s) => `${base}/${s}`));
-  const stale = docs
-    .filter((doc) => doc.docSource === base || (doc.docSource?.startsWith(`${base}/`) && !current.has(doc.docSource)))
-    .map((doc) => doc.docpath);
-  if (stale.length) await removeDocs(stale);
+  if (images.size) imageSets.set('chest-items', images);
 
-  return `${sections.size} sous-catégories — ${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)`
-    + (stale.length ? `, ${stale.length} ancien(s) document(s) retiré(s)` : '');
+  // Ancien document unique et sous-catégories disparues de l'API
+  const removed = await removeStale(docs, base, new Set([...sections.keys()].map((s) => `${base}/${s}`)));
+  return `${sections.size} sous-catégories — ${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)${removed}`;
+}
+
+// Emblèmes (« recommandations ») : un sommaire des factions et campagnes, puis un document
+// par campagne avec une introduction. Images retirées des documents, gardées pour Discord.
+async function syncRecommendations(docs) {
+  const { count, factions = [] } = await api('recommendations', { md: false });
+  if (!factions.length) throw new Error('API recommendations: aucune faction');
+  const base = `${SOT_API_URL}/recommendations`;
+
+  const summary = [
+    '# Emblèmes de Sea of Thieves : factions et campagnes',
+    '',
+    `Sea of Thieves compte ${count} emblèmes (succès à débloquer, avec des grades et des paliers), `
+      + 'répartis par faction et par campagne :',
+    '',
+    ...factions.map((f) => `- ${f.name} : ${f.count} emblèmes`
+      + (f.campaigns.length > 1 ? ` (campagnes : ${f.campaigns.map((c) => `${c.name} ${c.count}`).join(' ; ')})` : '')),
+  ].join('\n');
+  // Même source que l'éventuel ancien document unique : il est remplacé
+  await upsertDoc(docs, {
+    docSource: base, title: `${DOC_PREFIX}emblèmes par faction et campagne`, text: summary, label: 'recommendations (sommaire)',
+  });
+
+  const images = new Map();
+  const sources = new Set();
+  const counts = { 'mis à jour': 0, inchangé: 0 };
+  for (const f of factions) {
+    for (const c of f.campaigns) {
+      const docSource = `${base}/${f.key}/${c.key}`;
+      sources.add(docSource);
+      const where = c.name === f.name ? f.name : `${f.name} › ${c.name}`;
+      try {
+        const md = await api(`recommendations/${encodeURIComponent(f.key)}/${encodeURIComponent(c.key)}`);
+        // On saute les titres de l'API : l'introduction les remplace
+        const lines = stripImages(md.split('\n').filter((l) => l.trim() && !l.startsWith('#')), images, `Emblème — ${where}`);
+        const text = [
+          `# Emblèmes de Sea of Thieves — ${where}`,
+          '',
+          'Les emblèmes sont les succès à débloquer dans Sea of Thieves. Chacun a un grade maximal et des paliers '
+            + `(seuils à atteindre pour chaque grade). Ce document liste les ${c.count} emblèmes de la faction ${f.name}`
+            + (c.name === f.name ? '.' : `, campagne ${c.name}.`),
+          '',
+          ...lines,
+        ].join('\n');
+        counts[await upsertDoc(docs, {
+          docSource, title: `Emblèmes — ${where}`, text, label: `recommendations ${f.key}/${c.key}`,
+        })] += 1;
+      } catch (err) {
+        console.error(`📚 sync recommendations ${f.key}/${c.key} en échec:`, err.message);
+      }
+    }
+  }
+  if (images.size) imageSets.set('recommendations', images);
+
+  // Le sommaire porte la source de base : on ne le compte pas comme périmé
+  const removed = await removeStale(docs.filter((doc) => doc.docSource !== base), base, sources);
+  return `${count} emblèmes, ${sources.size} campagnes — ${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)${removed}`;
 }
 
 // Endpoints découpés en plusieurs documents ; les autres donnent un seul document
-const SPLIT_SYNCS = { 'release-notes': syncReleaseNotes, 'chest-items': syncChestItems };
+const SPLIT_SYNCS = {
+  'release-notes': syncReleaseNotes,
+  'chest-items': syncChestItems,
+  recommendations: syncRecommendations,
+};
 
 async function syncAll(endpoints) {
   console.log(`📚 Synchronisation démarrée (${new Date().toLocaleString('fr-FR')})`);
