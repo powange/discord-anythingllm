@@ -128,14 +128,28 @@ async function syncReleaseNotes(docs) {
     text: history, label: 'release-notes (historique)',
   });
 
-  // Contenu de la dernière version, présenté comme tel : le document de la version seule
-  // ne dit nulle part qu'elle est la plus récente (« contenu de la dernière mise à jour ? »)
+  // Sommaire de la dernière version, présenté comme tel. Il doit rester compact : AnythingLLM
+  // découpe en extraits d'~1000 car., et seuls ceux qui portent l'en-tête « dernière mise à jour »
+  // sont retrouvés par « contenu de la dernière version ? ». Le détail reste dans le document de la version.
   const latestNotes = await api(`release-notes/${encodeURIComponent(latest.version)}`);
+  const themes = []; // "### Thème" → ["#### Sous-thème", …]
+  for (const line of latestNotes.split('\n')) {
+    if (line.startsWith('### ')) themes.push({ name: line.slice(4).trim(), items: [] });
+    else if (line.startsWith('#### ') && themes.length) themes.at(-1).items.push(line.slice(5).trim());
+  }
+  // Le détail des correctifs n'aide pas à résumer la version et ferait déborder l'extrait
+  for (const t of themes) if (/fixed issues/i.test(t.name)) t.items = [];
   await upsertDoc(docs, {
     docSource: `${SOT_API_URL}/release-notes/latest`,
     title: `Dernière mise à jour de Sea of Thieves — ${label(latest)} (${latest.date})`,
-    text: `# Dernière mise à jour de Sea of Thieves : version ${label(latest)}, sortie le ${latest.date}\n\n`
-      + `Contenu de la dernière mise à jour (la plus récente) de Sea of Thieves :\n\n${latestNotes}`,
+    text: [
+      `# Dernière mise à jour de Sea of Thieves : version ${label(latest)}, sortie le ${latest.date}`,
+      '',
+      `Contenu de la dernière mise à jour (la plus récente, version ${label(latest)}), par thème :`,
+      ...themes.map((t) => `- ${t.name}${t.items.length ? ` : ${t.items.join(' ; ')}` : ''}`),
+      '',
+      `Le détail de chaque point se trouve dans les notes de version ${label(latest)}.`,
+    ].join('\n'),
     label: 'release-notes (dernière)',
   });
 
