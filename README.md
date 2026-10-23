@@ -81,7 +81,9 @@ Grâce au streaming, quand l'agent utilise des skills, le bot poste un **message
 
 ### Synchronisation d'une API externe
 
-Le bot peut alimenter la base de connaissances du workspace à partir d'une API (par défaut celle d'achievements-sot.powange.com). Avec `SOT_API_TOKEN` renseigné, il récupère au démarrage puis toutes les `SOT_SYNC_INTERVAL_HOURS` heures chaque endpoint de `SOT_API_ENDPOINTS` en Markdown (`?format=md`, jeton dans l'en-tête `Authorization`). Il le dépose comme document « SoT API — <endpoint> » via la Developer API d'AnythingLLM, l'ajoute au workspace et retire l'ancienne version. Un contenu inchangé n'est pas ré-embeddé. Les logs préfixés `📚` indiquent le résultat de chaque synchro.
+Le bot peut alimenter la base de connaissances du workspace à partir d'une API (par défaut celle d'achievements-sot.powange.com). Avec `SOT_API_TOKEN` renseigné, il récupère au démarrage puis toutes les `SOT_SYNC_INTERVAL_HOURS` heures chaque endpoint de `SOT_API_ENDPOINTS` en Markdown (`?format=md`, jeton dans l'en-tête `Authorization`). Il le dépose comme document « SoT API — <endpoint> » via la Developer API d'AnythingLLM, l'ajoute au workspace et retire l'ancienne version. Un contenu inchangé n'est pas ré-embeddé.
+
+L'endpoint `release-notes` est traité à part : le bot lit l'index JSON des versions et crée un document « historique » (qui commence par la dernière version et sa date), puis un document par version via `release-notes/<version>`. Les versions déjà présentes ne sont plus retéléchargées, sauf les 3 plus récentes, revérifiées à chaque tour. Un seul gros document noyait les questions du type « quelle est la dernière version ? » parmi des milliers d'extraits. Les logs préfixés `📚` indiquent le résultat de chaque synchro.
 
 | Variable | Défaut | Description |
 | --- | --- | --- |
