@@ -61,7 +61,14 @@ async function removeDocs(docpaths) {
 
 // Crée ou remplace le document d'une source. Renvoie 'inchangé' ou 'mis à jour'.
 async function upsertDoc(docs, { docSource, title, text, label }) {
-  const hash = createHash('sha256').update(text).digest('hex');
+  // AnythingLLM traite tout ce qui suit le dernier point du titre comme une extension et le retire :
+  // « … version 3.9.1 (…) » et « … version 3.9.0 (…) » deviendraient tous deux « …-3-9.txt ».
+  // Un « .txt » final lui sert d'extension et le titre reste intact (« …-3-9-1-(…).txt »).
+  const dotted = title.includes('.');
+  const fileTitle = dotted ? `${title}.txt` : title;
+  // Le titre entre dans l'empreinte des seuls titres à point : ces documents sont renvoyés une fois
+  // avec le titre corrigé, sans réindexer tous les autres
+  const hash = createHash('sha256').update(dotted ? `${fileTitle}\n${text}` : text).digest('hex');
   if (lastHashes.get(docSource) === hash) return 'inchangé';
 
   const existing = docs.filter((doc) => doc.docSource === docSource);
@@ -83,7 +90,7 @@ async function upsertDoc(docs, { docSource, title, text, label }) {
   // Nouveau document d'abord, puis échange dans le workspace : pas de trou entre les deux versions
   const { documents } = await llm('POST', '/document/raw-text', {
     textContent: text,
-    metadata: { title, docSource, description: `sha256:${hash}` },
+    metadata: { title: fileTitle, docSource, description: `sha256:${hash}` },
   });
   const location = documents?.[0]?.location;
   if (!location) throw new Error(`raw-text ${label}: pas d'emplacement renvoyé`);
