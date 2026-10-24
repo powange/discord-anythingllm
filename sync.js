@@ -9,7 +9,7 @@ const {
   ANYTHINGLLM_WORKSPACE,
   SOT_API_URL = 'https://achievements-sot.powange.com/api/agent',
   SOT_API_TOKEN,
-  SOT_API_ENDPOINTS = 'release-notes,chest-items,recommendations,steam-news,rarethief-guides',
+  SOT_API_ENDPOINTS = 'wiki-names,release-notes,chest-items,recommendations,steam-news,rarethief-guides',
   SOT_SYNC_INTERVAL_HOURS = '6',
 } = process.env;
 
@@ -502,6 +502,62 @@ async function syncRareThief(docs) {
   return syncSeries(docs, { base, indexSource, index, items, label: 'rarethief' });
 }
 
+// --- Noms du wiki (personnages, lieux, factions…) : servent au routage, rien n'est indexé ---
+// Une question qui cite l'un de ces noms part vers l'agent et sa skill wiki, quelle que soit sa formulation.
+const WIKI_API = 'https://seaofthieves.wiki.gg/api.php';
+const WIKI_CATEGORIES = (process.env.WIKI_CATEGORIES || [
+  'NPCs', 'Tall Tales', 'Trading Company', 'World Event', 'Outposts', 'Seaposts', 'Skeleton Forts',
+  'Sea Forts', 'Creatures', 'Enemy', 'Skeleton Lord', 'Islands',
+].join(',')).split(',').map((c) => c.trim()).filter(Boolean);
+// Pages générales des catégories et noms communs (animaux, rôles) : trop vagues pour désigner un sujet
+const WIKI_GENERIC = /^(ships|seaposts|outposts|islands|creatures|npcs|tall tales|trading compan(y|ies)|skeletons?|fish|sloop|galleon|brigantine|bats|rats|pets|chef|chicken|shark|snake|lookout)$/i;
+const MIN_WIKI_NAME = 4; // « Duke » ; les noms plus courts (« Bob ») sont trop ambigus
+const SHORT_WIKI_NAME = 8; // en dessous : majuscule exigée (« Duke », pas « duke »)
+let wikiNames = new Map(); // clé (minuscules) → titre de la page
+
+async function syncWikiNames() {
+  const names = new Map();
+  for (const category of WIKI_CATEGORIES) {
+    let cont = {};
+    do {
+      const params = new URLSearchParams({
+        action: 'query', list: 'categorymembers', cmtitle: `Category:${category}`, cmnamespace: '0',
+        cmlimit: '500', format: 'json', formatversion: '2', ...cont,
+      });
+      const res = await fetch(`${WIKI_API}?${params}`, { headers: { 'User-Agent': PUBLIC_UA } });
+      if (!res.ok) throw new Error(`wiki HTTP ${res.status}`);
+      const data = await res.json();
+      for (const { title } of data.query?.categorymembers ?? []) {
+        if (title.includes('/')) continue; // traductions (« Fish/fr ») et sous-pages (« Merrick/Journals »)
+        const name = title.replace(/\s*\([^)]*\)$/, '').trim(); // « Skeleton Fort (location) » → « Skeleton Fort »
+        if (name.length >= MIN_WIKI_NAME && !WIKI_GENERIC.test(name)) names.set(nameKey(name), title);
+      }
+      cont = data.continue ?? null;
+    } while (cont);
+  }
+  if (!names.size) throw new Error('aucun nom récupéré');
+  wikiNames = names;
+  return `${names.size} noms (${WIKI_CATEGORIES.length} catégories) pour le routage`;
+}
+
+// Titres de pages du wiki cités dans un texte (mot entier ; majuscule exigée pour les noms courts)
+export function findWikiNames(text, limit = 3) {
+  const lower = nameKey(text);
+  const found = [];
+  for (const [key, title] of wikiNames) {
+    for (let start = lower.indexOf(key); start !== -1; start = lower.indexOf(key, start + 1)) {
+      const end = start + key.length;
+      const isLetter = (c) => c !== undefined && /\p{L}|\d/u.test(c);
+      if (isLetter(text[start - 1]) || isLetter(text[end])) continue;
+      if (key.length < SHORT_WIKI_NAME && text[start] === text[start].toLowerCase()) continue;
+      found.push({ title, start, length: key.length });
+      break;
+    }
+  }
+  // Le nom le plus long d'abord (« Captain Flameheart » plutôt que « Flameheart »), sans doublon
+  return [...new Set(found.sort((a, b) => b.length - a.length).map((f) => f.title))].slice(0, limit);
+}
+
 // Endpoints découpés en plusieurs documents ; les autres donnent un seul document
 const SPLIT_SYNCS = {
   'release-notes': syncReleaseNotes,
@@ -509,6 +565,7 @@ const SPLIT_SYNCS = {
   recommendations: syncRecommendations,
   'steam-news': syncSteamNews,
   'rarethief-guides': syncRareThief,
+  'wiki-names': syncWikiNames,
 };
 
 async function syncAll(endpoints) {

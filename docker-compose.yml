@@ -20,7 +20,8 @@ services:
       STREAM_IDLE_TIMEOUT_MS: ${STREAM_IDLE_TIMEOUT_MS:-60000}
       SOT_API_TOKEN: ${SOT_API_TOKEN:-}
       SOT_API_URL: ${SOT_API_URL:-https://achievements-sot.powange.com/api/agent}
-      SOT_API_ENDPOINTS: ${SOT_API_ENDPOINTS:-release-notes,chest-items,recommendations,steam-news,rarethief-guides}
+      SOT_API_ENDPOINTS: ${SOT_API_ENDPOINTS:-wiki-names,release-notes,chest-items,recommendations,steam-news,rarethief-guides}
+      WIKI_CATEGORIES: ${WIKI_CATEGORIES:-}
       STEAM_NEWS_DAYS: ${STEAM_NEWS_DAYS:-180}
       RARETHIEF_DAYS: ${RARETHIEF_DAYS:-90}
       SOT_SYNC_INTERVAL_HOURS: ${SOT_SYNC_INTERVAL_HOURS:-6}

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } from 'discord.js';
-import { startDocSync, findItemImages } from './sync.js';
+import { startDocSync, findItemImages, findWikiNames } from './sync.js';
 
 // --- Configuration depuis l'environnement ---
 const {
@@ -258,14 +258,22 @@ async function logVectorSearch(question) {
 async function askWithRouting(message, sessionId, onStatus) {
   if (DEBUG) await logVectorSearch(message);
   if (!agentFallback) return askAnythingLLM(message, sessionId, onStatus);
+
+  // Pages du wiki citées par leur nom (personnages, lieux…) : indice donné à l'agent, qui cherche en anglais
+  const wikiTitles = findWikiNames(message);
   if (AGENT_FIRST.test(message)) {
-    console.log('  ↪ question sur un personnage → @agent directement');
-    return askAgent(message, sessionId, onStatus);
+    console.log('  ↪ thème hors base (personnage, lore, direct) → @agent directement');
+    return askAgent(message, sessionId, onStatus, wikiTitles);
   }
 
   // Objets et emblèmes cités par leur nom exact : on joint leur fiche, car la recherche
-  // vectorielle retrouve mal un nom propre (« Au cœur du fléau » → « Cœur ardent »)
+  // vectorielle retrouve mal un nom propre (« Au cœur du fléau » → « Cœur ardent »).
+  // Ils passent avant les noms du wiki : « le Coutelas de Flameheart » est un objet du coffre.
   const known = findItemImages(message, 3);
+  if (!known.length && wikiTitles.length) {
+    console.log(`  ↪ nom du wiki cité (${wikiTitles.join(', ')}) → @agent directement`);
+    return askAgent(message, sessionId, onStatus, wikiTitles);
+  }
   const cards = known.length
     ? `\n\nFiches de la base de connaissances :\n\n${known.map((k) => `[${k.category}]\n${k.entry}`).join('\n\n')}`
     : '';
@@ -276,16 +284,17 @@ async function askWithRouting(message, sessionId, onStatus) {
 
   console.log('  ↪ rien dans les documents → relance en @agent');
   onStatus?.('📚 Rien dans la base de connaissances, je cherche ailleurs…');
-  return askAgent(message, sessionId, onStatus);
+  return askAgent(message, sessionId, onStatus, wikiTitles);
 }
 
 // Passage par l'agent (skills personnalisées, recherche web).
 // Session neuve à chaque appel : tout historique (AUCUNE_INFO, réponses précédentes) pousse
 // sinon le modèle à recopier une ancienne réponse au lieu d'appeler ses outils.
 // Pas « fais une recherche web » : l'agent doit pouvoir choisir une skill spécialisée (ex. PNJ du wiki)
-function askAgent(message, sessionId, onStatus) {
+function askAgent(message, sessionId, onStatus, wikiTitles = []) {
+  const hint = wikiTitles.length ? ` Pages du wiki probablement concernées : ${wikiTitles.join(', ')}.` : '';
   const agentQuestion = `${message}\n\n(Consigne : utilise en priorité une de tes compétences spécialisées `
-    + `si l'une correspond à la question, sinon fais une recherche sur le web. ${DISCORD_FORMAT})`;
+    + `si l'une correspond à la question, sinon fais une recherche sur le web.${hint} ${DISCORD_FORMAT})`;
   return askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true });
 }
 

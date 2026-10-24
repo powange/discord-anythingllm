@@ -89,6 +89,8 @@ L'endpoint `chest-items` est découpé en un document par sous-catégorie (ex. �
 
 L'endpoint `recommendations` (les emblèmes du jeu) donne un document « sommaire » des factions et campagnes, puis un document par campagne via `recommendations/<faction>/<campagne>`, avec une introduction expliquant ce que sont les emblèmes. Leurs images sont jointes sur Discord comme celles du coffre.
 
+`wiki-names` ne crée aucun document : le bot récupère les titres des pages de quelques catégories du wiki (environ 400 personnages, lieux, factions, ennemis, îles). Une question qui cite l'un de ces noms (mot entier, majuscule exigée sous 8 lettres) part directement vers l'agent, avec le titre exact de la page en indice pour la skill wiki — sauf si elle cite aussi un objet du coffre ou un emblème, dont la fiche est prioritaire.
+
 Deux sources publiques complètent l'API : `steam-news` (annonces officielles de Rare publiées sur Steam, hors notes de version déjà couvertes) et `rarethief-guides` (guides récents du site communautaire Rare Thief). Chacune donne un document par élément et un sommaire daté ; les éléments sortis de la fenêtre (`STEAM_NEWS_DAYS`, `RARETHIEF_DAYS`) sont retirés, pour qu'une vieille annonce ne passe pas pour actuelle.
 
 Quand une question cite un objet du coffre ou un emblème par son nom exact, le bot joint sa fiche (catégorie, description, coût, prérequis ou paliers) à la question envoyée en mode query : la recherche vectorielle retrouve mal un nom propre précis. Les logs le signalent par une ligne `📇`.
@@ -99,7 +101,8 @@ Le modèle d'embedding d'AnythingLLM doit être multilingue : le modèle par dé
 | --- | --- | --- |
 | `SOT_API_TOKEN` | vide | Jeton de l'API. Vide = synchronisation désactivée. |
 | `SOT_API_URL` | `https://achievements-sot.powange.com/api/agent` | Base des endpoints. |
-| `SOT_API_ENDPOINTS` | `release-notes,chest-items,recommendations,steam-news,rarethief-guides` | Sources à synchroniser, séparées par des virgules. |
+| `SOT_API_ENDPOINTS` | `wiki-names,release-notes,chest-items,recommendations,steam-news,rarethief-guides` | Sources à synchroniser, séparées par des virgules. |
+| `WIKI_CATEGORIES` | personnages, Tall Tales, factions, événements du monde, lieux, ennemis, îles | Catégories du wiki dont les noms servent au routage (`wiki-names`). |
 | `STEAM_NEWS_DAYS` | `180` | Fenêtre (en jours) des annonces officielles synchronisées. |
 | `RARETHIEF_DAYS` | `90` | Fenêtre (en jours) des guides Rare Thief synchronisés. |
 | `SOT_SYNC_INTERVAL_HOURS` | `6` | Intervalle entre deux synchronisations. |
