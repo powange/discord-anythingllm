@@ -89,6 +89,16 @@ function statusFromEvent(evt) {
   return text || null;
 }
 
+// Retire le raisonnement des modèles « à réflexion » (<think>…</think>), que LM Studio peut laisser
+// dans le texte : bloc complet, balise fermante seule (ouverture avalée) ou bloc tronqué non refermé
+function stripThinking(text) {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^[\s\S]*?<\/think>/i, '')
+    .replace(/<think>[\s\S]*$/i, '')
+    .trim();
+}
+
 // Traduit une étape brute de l'agent en statut lisible pour Discord (null = à ne pas afficher).
 // Ex. brut : "@agent is executing `web-browsing` tool {\"query\": \"...\"}"
 const TOOL_LABELS = {
@@ -225,7 +235,8 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
     await reader.cancel().catch(() => {});
   }
 
-  const result = answer.trim();
+  const result = stripThinking(answer);
+  if (result.length < answer.trim().length) console.log(`  🧠 raisonnement du modèle retiré (${answer.trim().length - result.length} car.)`);
   console.log(`← réponse: ${result.length} car., ${events} évén., ${Date.now() - started} ms`);
   if (!result && events) {
     console.warn("  ⚠️ réponse vide malgré des événements — schéma d'événements inattendu ? (relance avec DEBUG=true)");
