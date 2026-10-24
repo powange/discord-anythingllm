@@ -405,9 +405,11 @@ client.on(Events.MessageCreate, async (message) => {
     if (statusMsg) await statusMsg.delete().catch(() => {});
 
     const chunks = splitMessage(answer || '_(réponse vide)_');
-    // Images des objets du coffre cités, jointes au dernier morceau
+    // Images des objets du coffre et emblèmes cités, jointes au dernier morceau (nom anglais en rappel)
     const embeds = findItemImages(answer || '', 4, { properNoun: true }).map((item) =>
-      new EmbedBuilder().setTitle(item.name).setDescription(item.category).setThumbnail(item.image));
+      new EmbedBuilder().setTitle(item.name)
+        .setDescription(item.nameEn ? `${item.category}\nEN : ${item.nameEn}` : item.category)
+        .setThumbnail(item.image));
     const withEmbeds = (content, i) => (i === chunks.length - 1 && embeds.length ? { content, embeds } : content);
     // Premier morceau en réponse, le reste à la suite
     await message.reply(withEmbeds(chunks[0], 0));

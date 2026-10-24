@@ -180,19 +180,6 @@ async function syncReleaseNotes(docs) {
     + `${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)`;
 }
 
-// Libellés français des catégories du coffre (clés de l'API)
-const CHEST_CATEGORIES = {
-  Ship: 'Navire',
-  Vanity: 'Apparence (titres, emotes, coiffures, accessoires, tatouages…)',
-  Clothing: 'Vêtements',
-  Equipment: 'Équipement (instruments, chope, boussole, longue-vue, pelle…)',
-  Armory: 'Armurerie (armes)',
-  ShipTrinket: 'Bibelots de navire',
-  ShipDecoration: 'Décorations de navire',
-  Bones: 'Corps squelettiques',
-  Pets: 'Animaux de compagnie',
-};
-
 // Images par source (coffre, emblèmes) : nom en minuscules → { name, image, category }.
 // Les URL restent hors des documents (bruit pour l'indexation, mal recopiées par le modèle) :
 // c'est le bot qui joint les images des objets et emblèmes cités dans une réponse.
@@ -203,19 +190,22 @@ const MIN_NAME_LENGTH = 8; // évite les faux positifs sur des noms trop courts
 const nameKey = (s) => s.toLowerCase().replace(/’/g, "'");
 
 // Retire des lignes Markdown les URL d'image et identifiants techniques, en notant au passage
-// la fiche de chaque élément (« - **Nom** … » et ses sous-lignes) : son image et son texte
+// la fiche de chaque élément (« - **Nom FR** / *Nom EN* … » et ses sous-lignes) : son image et son
+// texte, retrouvables par le nom français comme par le nom anglais (absent pour certains objets)
 function stripImages(lines, images, category) {
   const kept = [];
   let entry = null;
   const flush = () => {
-    const id = entry?.image && nameKey(entry.name);
-    if (id && id.length >= MIN_NAME_LENGTH && !images.has(id)) {
-      images.set(id, { name: entry.name, image: entry.image, category, entry: entry.lines.join('\n') });
+    if (!entry?.image) return;
+    const item = { name: entry.name, nameEn: entry.nameEn, image: entry.image, category, entry: entry.lines.join('\n') };
+    for (const n of [entry.name, entry.nameEn]) {
+      const id = n && nameKey(n);
+      if (id && id.length >= MIN_NAME_LENGTH && !images.has(id)) images.set(id, item);
     }
   };
   for (const line of lines) {
-    const name = line.match(/^- \*\*(.+?)\*\*/)?.[1];
-    if (name) { flush(); entry = { name, image: null, lines: [] }; }
+    const m = line.match(/^- \*\*(.+?)\*\*(?: \/ \*(.+?)\*)?/);
+    if (m) { flush(); entry = { name: m[1], nameEn: m[2] ?? null, image: null, lines: [] }; }
     const image = line.match(/^\s*- Image : (\S+)/)?.[1];
     if (image) {
       if (entry) entry.image = image;
@@ -265,54 +255,50 @@ export function findItemImages(text, limit = 4, { properNoun = false } = {}) {
 // Catalogue du coffre : un document par sous-catégorie, avec une introduction qui dit ce qu'est
 // le « coffre » (sinon le modèle comprend « coffres au trésor »). Images et identifiants retirés.
 async function syncChestItems(docs) {
-  const md = await api('chest-items');
-  const sections = new Map(); // "Catégorie/Sous-catégorie" → lignes brutes
-  let category = null;
-  let key = null;
-  for (const line of md.split('\n')) {
-    if (line.startsWith('## ')) { category = line.slice(3).trim(); key = null; continue; }
-    if (line.startsWith('### ') && category) {
-      key = `${category}/${line.slice(4).trim()}`;
-      sections.set(key, []);
-      continue;
-    }
-    if (key && line.trim()) sections.get(key).push(line);
-  }
-  if (!sections.size) throw new Error('API chest-items: aucune section reconnue (format Markdown modifié ?)');
+  // Sommaire JSON (catégories, sous-catégories, libellés FR/EN), puis une sous-catégorie par appel
+  const { categories = [] } = await api('chest-items', { md: false });
+  if (!categories.length) throw new Error('API chest-items: aucune catégorie');
 
   const base = `${SOT_API_URL}/chest-items`;
   const images = new Map();
+  const sources = new Set();
   const counts = { 'mis à jour': 0, inchangé: 0 };
-  for (const [section, raw] of sections) {
-    const [cat, sub] = section.split('/');
-    const catLabel = CHEST_CATEGORIES[cat] ?? cat;
-    const lines = stripImages(raw, images, `${catLabel} › ${sub}`);
-    const items = lines.filter((l) => l.startsWith('- ')).length;
-    const text = [
-      `# Coffre du pirate de Sea of Thieves — ${catLabel} › ${sub}`,
-      '',
-      'Le « coffre » (coffre du pirate) regroupe les objets cosmétiques et d\'équipement que l\'on peut '
-        + 'acheter ou débloquer dans Sea of Thieves. Ce ne sont pas des coffres au trésor. '
-        + `Ce document liste les ${items} objets de la catégorie ${catLabel} (${cat}), sous-catégorie ${sub}, `
-        + 'avec leur description, leur coût et leurs prérequis.',
-      '',
-      ...lines,
-    ].join('\n');
-    try {
-      counts[await upsertDoc(docs, {
-        docSource: `${base}/${section}`, title: `Coffre du pirate — ${catLabel} › ${sub}`,
-        text, label: `chest-items ${section}`,
-      })] += 1;
-    } catch (err) {
-      console.error(`📚 sync chest-items ${section} en échec:`, err.message);
+  for (const cat of categories) {
+    for (const sub of cat.subcategories ?? []) {
+      const section = `${cat.key}/${sub.key}`;
+      const docSource = `${base}/${section}`;
+      sources.add(docSource);
+      const where = `${cat.label?.fr ?? cat.key} › ${sub.label?.fr ?? sub.key}`;
+      const whereEn = `${cat.label?.en ?? cat.key} › ${sub.label?.en ?? sub.key}`;
+      try {
+        const md = await api(`chest-items/${encodeURIComponent(cat.key)}/${encodeURIComponent(sub.key)}`);
+        // On saute les titres de l'API : l'introduction les remplace
+        const lines = stripImages(md.split('\n').filter((l) => l.trim() && !l.startsWith('#')), images, where);
+        const items = lines.filter((l) => l.startsWith('- ')).length;
+        const text = [
+          `# Coffre du pirate de Sea of Thieves — ${where} (${whereEn})`,
+          '',
+          'Le « coffre » (coffre du pirate, « Pirate\'s Chest ») regroupe les objets cosmétiques et d\'équipement '
+            + 'que l\'on peut acheter ou débloquer dans Sea of Thieves. Ce ne sont pas des coffres au trésor. '
+            + `Ce document liste les ${items} objets de la catégorie ${where}, avec leur nom français et anglais, `
+            + 'leur description, leur coût et leurs prérequis.',
+          '',
+          ...lines,
+        ].join('\n');
+        counts[await upsertDoc(docs, {
+          docSource, title: `Coffre du pirate — ${where}`, text, label: `chest-items ${section}`,
+        })] += 1;
+      } catch (err) {
+        console.error(`📚 sync chest-items ${section} en échec:`, err.message);
+      }
     }
   }
 
   if (images.size) imageSets.set('chest-items', images);
 
   // Ancien document unique et sous-catégories disparues de l'API
-  const removed = await removeStale(docs, base, new Set([...sections.keys()].map((s) => `${base}/${s}`)));
-  return `${sections.size} sous-catégories — ${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)${removed}`;
+  const removed = await removeStale(docs, base, sources);
+  return `${sources.size} sous-catégories — ${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)${removed}`;
 }
 
 // Emblèmes (« recommandations ») : un sommaire des factions et campagnes, puis un document
@@ -321,15 +307,16 @@ async function syncRecommendations(docs) {
   const { count, factions = [] } = await api('recommendations', { md: false });
   if (!factions.length) throw new Error('API recommendations: aucune faction');
   const base = `${SOT_API_URL}/recommendations`;
+  const en = (x) => (x.nameEn && x.nameEn !== x.name ? ` / ${x.nameEn}` : ''); // nom anglais s'il diffère
 
   const summary = [
     '# Emblèmes de Sea of Thieves : factions et campagnes',
     '',
-    `Sea of Thieves compte ${count} emblèmes (succès à débloquer, avec des grades et des paliers), `
-      + 'répartis par faction et par campagne :',
+    `Sea of Thieves compte ${count} emblèmes (« emblems », succès à débloquer, avec des grades et des paliers), `
+      + 'répartis par faction et par campagne (noms français et anglais) :',
     '',
-    ...factions.map((f) => `- ${f.name} : ${f.count} emblèmes`
-      + (f.campaigns.length > 1 ? ` (campagnes : ${f.campaigns.map((c) => `${c.name} ${c.count}`).join(' ; ')})` : '')),
+    ...factions.map((f) => `- ${f.name}${en(f)} : ${f.count} emblèmes`
+      + (f.campaigns.length > 1 ? ` (campagnes : ${f.campaigns.map((c) => `${c.name}${en(c)} ${c.count}`).join(' ; ')})` : '')),
   ].join('\n');
   // Même source que l'éventuel ancien document unique : il est remplacé
   await upsertDoc(docs, {
@@ -344,16 +331,17 @@ async function syncRecommendations(docs) {
       const docSource = `${base}/${f.key}/${c.key}`;
       sources.add(docSource);
       const where = c.name === f.name ? f.name : `${f.name} › ${c.name}`;
+      const whereEn = c.name === f.name ? (f.nameEn ?? f.name) : `${f.nameEn ?? f.name} › ${c.nameEn ?? c.name}`;
       try {
         const md = await api(`recommendations/${encodeURIComponent(f.key)}/${encodeURIComponent(c.key)}`);
         // On saute les titres de l'API : l'introduction les remplace
         const lines = stripImages(md.split('\n').filter((l) => l.trim() && !l.startsWith('#')), images, `Emblème — ${where}`);
         const text = [
-          `# Emblèmes de Sea of Thieves — ${where}`,
+          `# Emblèmes de Sea of Thieves — ${where}${whereEn !== where ? ` (${whereEn})` : ''}`,
           '',
-          'Les emblèmes sont les succès à débloquer dans Sea of Thieves. Chacun a un grade maximal et des paliers '
-            + `(seuils à atteindre pour chaque grade). Ce document liste les ${c.count} emblèmes de la faction ${f.name}`
-            + (c.name === f.name ? '.' : `, campagne ${c.name}.`),
+          'Les emblèmes (« emblems ») sont les succès à débloquer dans Sea of Thieves. Chacun a un grade maximal '
+            + `et des paliers (seuils à atteindre pour chaque grade). Ce document liste les ${c.count} emblèmes `
+            + `de la faction ${f.name}${c.name === f.name ? '' : `, campagne ${c.name}`}, avec leur nom français et anglais.`,
           '',
           ...lines,
         ].join('\n');
