@@ -321,13 +321,37 @@ async function loadThread(message, depth = 0) {
   if (threadMemory.has(refId)) return threadMemory.get(refId);
   const botMsg = await message.fetchReference().catch(() => null);
   if (!botMsg || botMsg.author.id !== client.user.id) return null;
-  const questionMsg = botMsg.reference?.messageId ? await botMsg.fetchReference().catch(() => null) : null;
+  const chunks = await answerChunks(botMsg);
+  const questionMsg = chunks[0].reference?.messageId ? await chunks[0].fetchReference().catch(() => null) : null;
   return {
     question: questionMsg ? stripMention(questionMsg.content) : '',
     // Anciennes réponses : pied de réponse et raisonnement <think> affiché avant sa correction retirés
-    answer: stripThinking(stripFooter(botMsg.content)),
+    answer: stripThinking(stripFooter(chunks.map((c) => c.content).join('\n'))),
     parent: questionMsg ? await loadThread(questionMsg, depth + 1) : null,
   };
+}
+
+// Morceaux d'une réponse découpée : seul le premier répond à la question, les suivants sont envoyés
+// à la suite sans lien. On regroupe les messages de Sotia consécutifs autour du morceau visé, jusqu'au
+// premier morceau (celui qui a un lien) avant, et jusqu'à la réponse suivante (nouveau lien) après.
+async function answerChunks(botMsg) {
+  const isBot = (m) => m.author.id === client.user.id;
+  const byTime = (a, b) => a.createdTimestamp - b.createdTimestamp;
+  const chunks = [botMsg];
+  if (!botMsg.reference) {
+    const before = await botMsg.channel.messages.fetch({ before: botMsg.id, limit: 5 }).catch(() => null);
+    for (const m of [...(before?.values() ?? [])].sort(byTime).reverse()) {
+      if (!isBot(m)) break;
+      chunks.unshift(m);
+      if (m.reference) break;
+    }
+  }
+  const after = await botMsg.channel.messages.fetch({ after: botMsg.id, limit: 5 }).catch(() => null);
+  for (const m of [...(after?.values() ?? [])].sort(byTime)) {
+    if (!isBot(m) || m.reference) break;
+    chunks.push(m);
+  }
+  return chunks;
 }
 
 // Contexte transmis au modèle : les derniers échanges du fil, du plus ancien au plus récent
