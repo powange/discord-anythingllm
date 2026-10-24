@@ -232,13 +232,17 @@ async function removeStale(docs, base, currentSources) {
 }
 
 // Objets et emblèmes cités dans un texte, dans leur ordre d'apparition (max `limit`) :
-// { name, image, category, entry } — sert aux images des réponses et aux fiches jointes aux questions
-export function findItemImages(text, limit = 4) {
+// { name, image, category, entry } — sert aux images des réponses et aux fiches jointes aux questions.
+// properNoun : n'accepter que les noms écrits avec une majuscule, comme un nom propre (réponses du
+// modèle) — sinon « pour une surprise explosive » déclenche l'emblème « Surprise explosive ».
+export function findItemImages(text, limit = 4, { properNoun = false } = {}) {
   const lower = nameKey(text);
   const matches = [];
   for (const [name, item] of [...imageSets.values()].flatMap((set) => [...set])) {
     // Toutes les occurrences : la première peut être incluse dans un nom plus long
     for (let start = lower.indexOf(name); start !== -1; start = lower.indexOf(name, start + 1)) {
+      const first = text[start];
+      if (properNoun && first === first.toLowerCase()) continue;
       matches.push({ ...item, start, end: start + name.length });
     }
   }
