@@ -78,7 +78,7 @@ L'agent peut enchaîner **plusieurs skills** sur une même demande (multi-step t
 
 ### Fils de conversation
 
-Chaque mention de Sotia ouvre une nouvelle conversation. Utiliser « Répondre » sur un message de Sotia (avec ou sans mention) continue le fil : les 3 derniers échanges (questions du joueur et réponses finales de Sotia, sans le pied de réponse) sont joints à la nouvelle question, et les questions du fil servent aussi aux recherches (documents, fiches, noms du wiki). La mémoire vient de Discord et non de l'historique d'AnythingLLM, qui contient consignes, extraits joints et `AUCUNE_INFO` ; chaque appel à AnythingLLM se fait donc dans une session neuve. Après un redémarrage, le bot retrouve le dernier échange en relisant les messages Discord.
+Chaque mention de Sotia ouvre une nouvelle conversation. Utiliser « Répondre » sur un message de Sotia (avec ou sans mention) continue le fil : les 3 derniers échanges (questions du joueur et réponses finales de Sotia, sans le pied de réponse) sont joints à la nouvelle question, et les questions du fil servent aussi aux recherches (documents, fiches, noms du wiki). La mémoire vient de Discord et non de l'historique d'AnythingLLM, qui contient consignes, extraits joints et `AUCUNE_INFO` ; chaque appel à AnythingLLM se fait donc dans une session neuve. Hors mémoire (anciens messages, redémarrage), le bot reconstitue le fil en relisant la chaîne des réponses sur Discord ; pour un ancien message, il faut alors garder la mention active dans la réponse.
 
 ### Statut « réflexion » éphémère
 

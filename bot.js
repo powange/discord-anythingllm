@@ -313,15 +313,21 @@ const stripMention = (text) => text.replace(new RegExp(`<@!?${client.user.id}>`,
 const stripFooter = (text) => text.split('\n').filter((l) => !l.startsWith('-# ')).join('\n').trim();
 
 // Échange auquel ce message répond, s'il répond à Sotia (sinon null : nouveau fil).
-// Après un redémarrage, la mémoire est vide : on relit alors le message de Sotia et sa question sur Discord.
-async function loadThread(message) {
+// Hors mémoire (anciens messages, redémarrage), on relit la chaîne sur Discord : message de Sotia →
+// question à laquelle il répond → message de Sotia auquel cette question répondait… (THREAD_EXCHANGES max)
+async function loadThread(message, depth = 0) {
   const refId = message.reference?.messageId;
-  if (!refId) return null;
+  if (!refId || depth >= THREAD_EXCHANGES) return null;
   if (threadMemory.has(refId)) return threadMemory.get(refId);
   const botMsg = await message.fetchReference().catch(() => null);
   if (!botMsg || botMsg.author.id !== client.user.id) return null;
   const questionMsg = botMsg.reference?.messageId ? await botMsg.fetchReference().catch(() => null) : null;
-  return { question: questionMsg ? stripMention(questionMsg.content) : '', answer: stripFooter(botMsg.content), parent: null };
+  return {
+    question: questionMsg ? stripMention(questionMsg.content) : '',
+    // Anciennes réponses : pied de réponse et raisonnement <think> affiché avant sa correction retirés
+    answer: stripThinking(stripFooter(botMsg.content)),
+    parent: questionMsg ? await loadThread(questionMsg, depth + 1) : null,
+  };
 }
 
 // Contexte transmis au modèle : les derniers échanges du fil, du plus ancien au plus récent
