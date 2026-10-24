@@ -102,9 +102,9 @@ Le modèle d'embedding d'AnythingLLM doit être multilingue : le modèle par dé
 
 N'ajoute pas un endpoint dont le contenu dépend du compte lié au jeton : tous les membres du Discord le recevraient comme une information générale. Les trois endpoints par défaut sont des catalogues communs à tous les joueurs.
 
-### Skill d'agent : wiki Sea of Thieves
+### Skills d'agent
 
-Le dossier [`skills/sot-wiki`](skills/sot-wiki) contient une skill AnythingLLM générique qui cherche dans le wiki Sea of Thieves et lit la page la plus pertinente (personnages, navires du lore, îles, quêtes, créatures…). Elle s'installe dans AnythingLLM, pas dans le bot : voir son [README](skills/sot-wiki/README.md).
+Le dossier [`skills`](skills) contient des skills AnythingLLM pour Sea of Thieves : wiki (`sot-wiki`), guides Rare Thief (`sot-guides`), annonces officielles (`sot-news`) et état des serveurs (`sot-status`). Elles s'installent dans AnythingLLM, pas dans le bot : voir le [README des skills](skills/README.md). Le bot envoie directement à l'agent les questions sur leurs thèmes (personnages, lore, serveurs, actualités, événements, énigmes, guides).
 
 ## Lancer en local
 

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Mintplex-Labs/anything-llm/refs/heads/master/server/utils/agents/imported-manifest.schema.json",
+  "active": true,
+  "hubId": "sot-guides",
+  "name": "Guides Sea of Thieves (Rare Thief)",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Cherche dans les guides du site communautaire Rare Thief (rarethief.com, plus de 1000 guides) et renvoie le guide le plus pertinent : solutions d'énigmes (riddles), Tall Tales pas à pas, emplacements des journaux, événements en cours, défis Bilge Rats du mois, astuces de gameplay. Les guides sont en anglais : la recherche doit être en anglais (ex. 'Heart of Fire', 'Community Weekend riddle', 'Bilge Rats challenges'). À utiliser pour « comment faire / où trouver / solution de ». by powange",
+  "author": "powange",
+  "license": "MIT",
+  "examples": [
+    {
+      "prompt": "Comment résoudre l'énigme du Community Weekend ?",
+      "call": "{\"query\": \"Community Weekend riddle\"}"
+    },
+    {
+      "prompt": "Où sont les journaux du Tall Tale Heart of Fire ?",
+      "call": "{\"query\": \"Heart of Fire journal locations\"}"
+    },
+    {
+      "prompt": "Quels sont les défis Bilge Rats ce mois-ci ?",
+      "call": "{\"query\": \"Bilge Rats challenges\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "query": {
+        "description": "Sujet du guide recherché, EN ANGLAIS (ex. 'Shores of Gold', 'Fort of the Damned', 'Community Weekend riddle').",
+        "type": "string"
+      }
+    }
+  },
+  "imported": true
+}

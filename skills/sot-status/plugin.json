@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Mintplex-Labs/anything-llm/refs/heads/master/server/utils/agents/imported-manifest.schema.json",
+  "active": true,
+  "hubId": "sot-status",
+  "name": "État des serveurs Sea of Thieves",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Donne l'état actuel des serveurs de Sea of Thieves d'après la page de statut officielle de Rare (jeu en panne, matchmaking, erreurs « beard » en cours), l'historique des incidents des derniers jours, et le nombre de joueurs connectés sur Steam. À utiliser pour « les serveurs sont down ? », « y a-t-il une maintenance ? », « pourquoi je n'arrive pas à me connecter ? », « combien de joueurs en ligne ? ». by powange",
+  "author": "powange",
+  "license": "MIT",
+  "examples": [
+    {
+      "prompt": "Les serveurs de Sea of Thieves sont en panne ?",
+      "call": "{\"days\": 3}"
+    },
+    {
+      "prompt": "Il y a eu des problèmes de serveurs cette semaine ?",
+      "call": "{\"days\": 7}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "days": {
+        "description": "Optionnel : nombre de jours d'historique des incidents à afficher (3 par défaut, 14 au maximum).",
+        "type": "number"
+      }
+    }
+  },
+  "imported": true
+}

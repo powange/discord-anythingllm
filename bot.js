@@ -56,7 +56,12 @@ const AGENT_FIRST = new RegExp([
   'lore\\b', 'histoire\\b', 'légende de\\b', // pas « Légende des pirates » (un titre du jeu)
   // « le bateau de Flameheart » : navire d'un personnage (les cosmétiques disent « navire X », « de navire »)
   "(bateau|navire|vaisseau|galion|sloop|brigantin)s? (de|du|d')",
-].map((p) => `\\b${p}`).join('|'), 'i');
+  // Données en direct ou communautaires (skills statut, actualités, guides) : la base ne les a pas
+  'serveurs?\\b', 'panne', 'down\\b', 'maintenance', 'joueurs (en ligne|connectés)', 'beard',
+  'actualités?\\b', 'news\\b', 'quoi de neuf', 'événements?\\b', 'twitch drops?', 'community weekend',
+  'énigmes?\\b', 'riddles?\\b', 'guides?\\b', 'soluces?\\b', 'défis\\b', 'challenges?\\b',
+  // Début de mot : (?<!\p{L}) et non \b, qui ignore les lettres accentuées (« événement », « énigme »)
+].map((p) => `(?<!\\p{L})${p}`).join('|'), 'iu');
 
 // Compare sans tenir compte de la casse, des espaces ni de la ponctuation finale
 const normalize = (s) => s.toLowerCase().replace(/\s+/g, ' ').replace(/[\s.!?…]+$/, '').trim();

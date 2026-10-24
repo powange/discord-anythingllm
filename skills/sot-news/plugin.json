@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Mintplex-Labs/anything-llm/refs/heads/master/server/utils/agents/imported-manifest.schema.json",
+  "active": true,
+  "hubId": "sot-news",
+  "name": "Actualités officielles Sea of Thieves",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Lit les dernières annonces officielles de Rare sur Sea of Thieves (publiées sur Steam) : événements à venir ou en cours (Community Weekend, Twitch Drops…), « This Month in Sea of Thieves », concours, nouvelles saisons, notes de version. Sans mot-clé, renvoie la liste des annonces récentes et le contenu de la plus récente ; avec un mot-clé EN ANGLAIS (ex. 'Community Weekend', 'Twitch Drops', 'Season 21'), renvoie l'annonce correspondante. À utiliser pour « quoi de neuf », « quels événements », « que se passe-t-il cette semaine ». by powange",
+  "author": "powange",
+  "license": "MIT",
+  "examples": [
+    {
+      "prompt": "Quoi de neuf sur Sea of Thieves ?",
+      "call": "{\"query\": \"\"}"
+    },
+    {
+      "prompt": "C'est quoi le Community Weekend de ce week-end ?",
+      "call": "{\"query\": \"Community Weekend\"}"
+    },
+    {
+      "prompt": "Y a-t-il des Twitch Drops en ce moment ?",
+      "call": "{\"query\": \"Twitch Drops\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "query": {
+        "description": "Optionnel : mot-clé EN ANGLAIS pour trouver une annonce précise (ex. 'Community Weekend'). Vide pour les dernières annonces.",
+        "type": "string"
+      }
+    }
+  },
+  "imported": true
+}
