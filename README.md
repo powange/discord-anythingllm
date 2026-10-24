@@ -27,6 +27,7 @@ Chaque salon utilise un `sessionId` distinct (`discord-<channelId>`) : chaque sa
 | `ANYTHINGLLM_MODE`      |     ❌      | `chat`  | `chat` (conversationnel) ou `query` (strictement factuel). `agent` n'est **pas** valide ici. |
 | `ANYTHINGLLM_AGENT`     |     ❌      | `false` | `true` pour préfixer chaque question par `@agent` (déclenche les skills/tools/MCP). `fallback` : documents d'abord, `@agent` seulement si rien n'est trouvé. |
 | `QUERY_REFUSAL_RESPONSE` | ❌ | réponse par défaut d'AnythingLLM | Mode `fallback` : texte de refus du mode query, à renseigner seulement s'il a été personnalisé dans le workspace. |
+| `RESPONSE_FOOTER`       |     ❌      | `true`  | Ligne en petits caractères sous chaque réponse : durée, chemin suivi (📚 base de connaissances / 🔎 agent), outils de l'agent, fiches jointes. |
 | `ALLOWED_CHANNEL_IDS`   |     ❌      |  vide   | IDs de salons (séparés par des virgules) où répondre à tous les messages.         |
 
 Le bot **échoue proprement au démarrage** si une variable obligatoire manque.

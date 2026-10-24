@@ -26,6 +26,9 @@ const allowedChannels = new Set(
   ALLOWED_CHANNEL_IDS.split(',').map((id) => id.trim()).filter(Boolean),
 );
 
+// Pied de réponse (durée, chemin suivi, outils) : désactivable avec RESPONSE_FOOTER=false
+const showFooter = process.env.RESPONSE_FOOTER !== 'false';
+
 // Mode agent : préfixe la question par @agent pour déclencher skills/tools/MCP
 //   'true'     → toujours @agent
 //   'fallback' → d'abord en mode query (documents seuls), puis @agent si rien trouvé
@@ -129,7 +132,8 @@ function formatStatus(raw) {
 
 // Interroge le workspace en streaming (SSE) et renvoie le texte final.
 // onStatus(text) est appelé pour chaque activité de skill remontée par l'agent.
-async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM_MODE, agent = agentEnabled } = {}) {
+// trace (optionnel) : relève les outils appelés par l'agent, pour le pied de réponse
+async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM_MODE, agent = agentEnabled, trace } = {}) {
   const url = `${ANYTHINGLLM_URL}/api/v1/workspace/${ANYTHINGLLM_WORKSPACE}/stream-chat`;
   // @agent déclenche l'agent AnythingLLM via la Developer API (mode reste chat/query)
   const payload = agent ? `@agent ${message}` : message;
@@ -210,6 +214,8 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
         const status = statusFromEvent(evt);
         if (status) {
           console.log(`  🔧 ${status.slice(0, 200)}`); // trace brute des skills de l'agent (ex. recherche web)
+          const tool = status.match(/executing `([^`]+)` tool/)?.[1];
+          if (tool) trace?.tools.add(tool);
           const pretty = formatStatus(status);
           if (pretty) onStatus?.(pretty);
         }
@@ -275,15 +281,20 @@ async function logVectorSearch(question) {
 }
 
 // Routage à deux temps : documents d'abord (mode query), agent (recherche web) ensuite.
-async function askWithRouting(message, sessionId, onStatus) {
+// trace : chemin suivi, fiches jointes et outils appelés, pour le pied de réponse
+async function askWithRouting(message, sessionId, onStatus, trace = { tools: new Set() }) {
   if (DEBUG) await logVectorSearch(message);
-  if (!agentFallback) return askAnythingLLM(message, sessionId, onStatus);
+  if (!agentFallback) {
+    trace.path = agentEnabled ? 'agent' : 'documents';
+    return askAnythingLLM(message, sessionId, onStatus, { trace });
+  }
 
   // Pages du wiki citées par leur nom (personnages, lieux…) : indice donné à l'agent, qui cherche en anglais
   const wikiTitles = findWikiNames(message);
   if (AGENT_FIRST.test(message)) {
     console.log('  ↪ thème hors base (personnage, lore, direct) → @agent directement');
-    return askAgent(message, sessionId, onStatus, wikiTitles);
+    trace.path = 'agent';
+    return askAgent(message, sessionId, onStatus, wikiTitles, trace);
   }
 
   // Objets et emblèmes cités par leur nom exact : on joint leur fiche, car la recherche
@@ -292,30 +303,52 @@ async function askWithRouting(message, sessionId, onStatus) {
   const known = findItemImages(message, 3);
   if (!known.length && wikiTitles.length) {
     console.log(`  ↪ nom du wiki cité (${wikiTitles.join(', ')}) → @agent directement`);
-    return askAgent(message, sessionId, onStatus, wikiTitles);
+    trace.path = 'agent';
+    return askAgent(message, sessionId, onStatus, wikiTitles, trace);
   }
   const cards = known.length
     ? `\n\nFiches de la base de connaissances :\n\n${known.map((k) => `[${k.category}]\n${k.entry}`).join('\n\n')}`
     : '';
-  if (known.length) console.log(`  📇 fiche(s) jointe(s) : ${known.map((k) => k.name).join(', ')}`);
+  if (known.length) {
+    console.log(`  📇 fiche(s) jointe(s) : ${known.map((k) => k.name).join(', ')}`);
+    trace.cards = known.map((k) => k.name);
+  }
 
+  trace.path = 'documents';
   const answer = await askAnythingLLM(message + cards + QUERY_INSTRUCTION, sessionId, onStatus, { mode: 'query', agent: false });
   if (answer && !isQueryRefusal(answer)) return answer;
 
   console.log('  ↪ rien dans les documents → relance en @agent');
   onStatus?.('📚 Rien dans la base de connaissances, je cherche ailleurs…');
-  return askAgent(message, sessionId, onStatus, wikiTitles);
+  trace.path = 'documents→agent';
+  return askAgent(message, sessionId, onStatus, wikiTitles, trace);
 }
 
 // Passage par l'agent (skills personnalisées, recherche web).
 // Session neuve à chaque appel : tout historique (AUCUNE_INFO, réponses précédentes) pousse
 // sinon le modèle à recopier une ancienne réponse au lieu d'appeler ses outils.
 // Pas « fais une recherche web » : l'agent doit pouvoir choisir une skill spécialisée (ex. PNJ du wiki)
-function askAgent(message, sessionId, onStatus, wikiTitles = []) {
+function askAgent(message, sessionId, onStatus, wikiTitles = [], trace) {
   const hint = wikiTitles.length ? ` Pages du wiki probablement concernées : ${wikiTitles.join(', ')}.` : '';
   const agentQuestion = `${message}\n\n(Consigne : utilise en priorité une de tes compétences spécialisées `
     + `si l'une correspond à la question, sinon fais une recherche sur le web.${hint} ${DISCORD_FORMAT})`;
-  return askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true });
+  return askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true, trace });
+}
+
+// Pied de réponse (petit texte gris Discord « -# ») : durée, chemin suivi, outils de l'agent, fiches
+const TOOL_NAMES = {
+  'sot-wiki': 'wiki', 'sot-news': 'annonces officielles', 'sot-guides': 'guides Rare Thief',
+  'sot-status': 'statut des serveurs', 'web-browsing': 'recherche web', 'web-scraping': 'page web',
+  'rag-memory': 'documents', 'document-summarizer': 'documents',
+};
+const ROUTES = { documents: '📚 base de connaissances', agent: '🔎 agent', 'documents→agent': '📚→🔎 agent' };
+function responseFooter(ms, trace) {
+  const parts = [`⏱️ ${(ms / 1000).toFixed(1).replace('.', ',')} s`];
+  const tools = [...new Set([...trace.tools].map((t) => TOOL_NAMES[t] ?? t))];
+  const route = ROUTES[trace.path];
+  if (route) parts.push(tools.length ? `${route} : ${tools.join(', ')}` : route);
+  if (trace.cards?.length) parts.push(`📇 ${trace.cards.join(', ')}`);
+  return `-# ${parts.join(' · ')}`;
 }
 
 // --- Découpe des réponses longues ---
@@ -417,14 +450,17 @@ client.on(Events.MessageCreate, async (message) => {
   };
 
   try {
+    const started = Date.now();
+    const trace = { tools: new Set(), cards: [], path: null };
     const answer = await withTyping(message.channel, () =>
-      askWithRouting(question, sessionId, showStatus),
+      askWithRouting(question, sessionId, showStatus, trace),
     );
 
     // La réponse est prête : on retire le message de statut éphémère
     if (statusMsg) await statusMsg.delete().catch(() => {});
 
-    const chunks = splitMessage(answer || '_(réponse vide)_');
+    const footer = showFooter ? `\n\n${responseFooter(Date.now() - started, trace)}` : '';
+    const chunks = splitMessage((answer || '_(réponse vide)_') + footer);
     // Images des objets du coffre et emblèmes cités, jointes au dernier morceau (nom anglais en rappel)
     const embeds = findItemImages(answer || '', 4, { properNoun: true }).map((item) =>
       new EmbedBuilder().setTitle(item.name)
