@@ -295,17 +295,66 @@ async function searchExtracts(question) {
   }
 }
 
+// --- Fils de conversation ---
+// Une mention ouvre un nouveau fil ; « Répondre » à un message de Sotia continue le sien. La mémoire
+// vient de Discord (questions + réponses finales), pas de l'historique d'AnythingLLM, qui contient
+// consignes, extraits joints et AUCUNE_INFO.
+const THREAD_EXCHANGES = 3; // échanges précédents transmis au modèle
+const THREAD_ANSWER_CHARS = 800; // réponse précédente raccourcie au-delà
+const threadMemory = new Map(); // id d'un message de Sotia → { question, answer, parent }
+
+function rememberExchange(messageIds, record) {
+  for (const id of messageIds) threadMemory.set(id, record);
+  // Mémoire bornée : on oublie les plus anciens (ordre d'insertion de la Map)
+  while (threadMemory.size > 2000) threadMemory.delete(threadMemory.keys().next().value);
+}
+
+const stripMention = (text) => text.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
+const stripFooter = (text) => text.split('\n').filter((l) => !l.startsWith('-# ')).join('\n').trim();
+
+// Échange auquel ce message répond, s'il répond à Sotia (sinon null : nouveau fil).
+// Après un redémarrage, la mémoire est vide : on relit alors le message de Sotia et sa question sur Discord.
+async function loadThread(message) {
+  const refId = message.reference?.messageId;
+  if (!refId) return null;
+  if (threadMemory.has(refId)) return threadMemory.get(refId);
+  const botMsg = await message.fetchReference().catch(() => null);
+  if (!botMsg || botMsg.author.id !== client.user.id) return null;
+  const questionMsg = botMsg.reference?.messageId ? await botMsg.fetchReference().catch(() => null) : null;
+  return { question: questionMsg ? stripMention(questionMsg.content) : '', answer: stripFooter(botMsg.content), parent: null };
+}
+
+// Contexte transmis au modèle : les derniers échanges du fil, du plus ancien au plus récent
+function threadContext(record) {
+  const chain = [];
+  for (let r = record; r && chain.length < THREAD_EXCHANGES; r = r.parent) chain.unshift(r);
+  const clip = (s) => (s.length > THREAD_ANSWER_CHARS ? `${s.slice(0, THREAD_ANSWER_CHARS)}…` : s);
+  return {
+    history: 'Échanges précédents de cette conversation (pour comprendre la nouvelle question) :\n\n'
+      + chain.map((r) => `${r.question ? `Joueur : ${r.question}\n` : ''}Sotia : ${clip(r.answer)}`).join('\n\n'),
+    // Les questions du fil aident à retrouver le sujet (« et son bateau ? » après « qui est Flameheart ? »)
+    search: chain.map((r) => r.question).filter(Boolean).join(' '),
+    exchanges: chain.length,
+  };
+}
+
 // Routage à deux temps : documents d'abord (mode query), agent (recherche web) ensuite.
-// trace : chemin suivi, fiches jointes et outils appelés, pour le pied de réponse
-async function askWithRouting(message, sessionId, onStatus, trace = { tools: new Set() }) {
+// trace : chemin suivi, fiches jointes et outils appelés, pour le pied de réponse.
+// thread : contexte du fil (threadContext) quand le message répond à Sotia.
+async function askWithRouting(question, sessionId, onStatus, trace = { tools: new Set() }, thread = null) {
+  // Avec un fil : échanges précédents avant la question ; recherches sur la question précédente + celle-ci
+  const message = thread ? `${thread.history}\n\nNouvelle question : ${question}` : question;
+  const search = thread?.search ? `${thread.search} ${question}` : question;
+  if (thread) trace.thread = thread.exchanges;
+
   if (!agentFallback) {
     trace.path = agentEnabled ? 'agent' : 'documents';
     return askAnythingLLM(message, sessionId, onStatus, { trace });
   }
 
   // Pages du wiki citées par leur nom (personnages, lieux…) : indice donné à l'agent, qui cherche en anglais
-  const wikiTitles = findWikiNames(message);
-  if (AGENT_FIRST.test(message)) {
+  const wikiTitles = findWikiNames(search);
+  if (AGENT_FIRST.test(question)) {
     console.log('  ↪ thème hors base (personnage, lore, direct) → @agent directement');
     trace.path = 'agent';
     return askAgent(message, sessionId, onStatus, wikiTitles, trace);
@@ -314,7 +363,7 @@ async function askWithRouting(message, sessionId, onStatus, trace = { tools: new
   // Objets et emblèmes cités par leur nom exact : on joint leur fiche, car la recherche
   // vectorielle retrouve mal un nom propre (« Au cœur du fléau » → « Cœur ardent »).
   // Ils passent avant les noms du wiki : « le Coutelas de Flameheart » est un objet du coffre.
-  const known = findItemImages(message, 3);
+  const known = findItemImages(search, 3);
   if (!known.length && wikiTitles.length) {
     console.log(`  ↪ nom du wiki cité (${wikiTitles.join(', ')}) → @agent directement`);
     trace.path = 'agent';
@@ -328,8 +377,8 @@ async function askWithRouting(message, sessionId, onStatus, trace = { tools: new
     trace.cards = known.map((k) => k.name);
   }
 
-  // Meilleurs extraits pour la question seule (voir searchExtracts)
-  const found = await searchExtracts(message);
+  // Meilleurs extraits pour la question seule, sans consigne (voir searchExtracts)
+  const found = await searchExtracts(search);
   const extracts = found.length
     ? `\n\nExtraits de la base de connaissances :\n\n${found.map((e) => `[${e.title}]\n${e.text}`).join('\n\n')}`
     : '';
@@ -372,6 +421,7 @@ function responseFooter(ms, trace) {
   const route = ROUTES[trace.path];
   if (route) parts.push(tools.length ? `${route} : ${tools.join(', ')}` : route);
   if (trace.cards?.length) parts.push(`📇 ${trace.cards.join(', ')}`);
+  if (trace.thread) parts.push(`🧵 suite de la conversation`);
   return `-# ${parts.join(' · ')}`;
 }
 
@@ -442,14 +492,15 @@ client.on(Events.MessageCreate, async (message) => {
   const isDM = message.channel.isDMBased();
   const isMentioned = message.mentions.users.has(client.user.id);
   const isAllowedChannel = allowedChannels.has(message.channel.id);
+  // « Répondre » à Sotia sans la mentionner (mention désactivée dans la réponse) : c'est aussi pour elle
+  const refId = message.reference?.messageId;
+  const isReplyToBot = Boolean(refId) && (threadMemory.has(refId) || message.mentions.repliedUser?.id === client.user.id);
 
-  // Ne répond qu'en DM, sur mention, ou dans un salon en écoute totale
-  if (!isDM && !isMentioned && !isAllowedChannel) return;
+  // Ne répond qu'en DM, sur mention, en réponse à l'un de ses messages, ou dans un salon en écoute totale
+  if (!isDM && !isMentioned && !isReplyToBot && !isAllowedChannel) return;
 
   // Retire la mention du bot du texte avant d'envoyer la question
-  const question = message.content
-    .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
-    .trim();
+  const question = stripMention(message.content);
 
   if (!question) {
     await message.reply('Pose-moi une question 🙂').catch(() => {});
@@ -476,8 +527,12 @@ client.on(Events.MessageCreate, async (message) => {
   try {
     const started = Date.now();
     const trace = { tools: new Set(), cards: [], path: null };
+    // « Répondre » à un message de Sotia : on continue ce fil ; sinon nouvelle conversation
+    const previous = await loadThread(message);
+    const thread = previous ? threadContext(previous) : null;
+    if (thread) console.log(`  🧵 suite d'un fil (${thread.exchanges} échange(s) précédent(s))`);
     const answer = await withTyping(message.channel, () =>
-      askWithRouting(question, sessionId, showStatus, trace),
+      askWithRouting(question, sessionId, showStatus, trace, thread),
     );
 
     // La réponse est prête : on retire le message de statut éphémère
@@ -492,8 +547,10 @@ client.on(Events.MessageCreate, async (message) => {
         .setThumbnail(item.image));
     const withEmbeds = (content, i) => (i === chunks.length - 1 && embeds.length ? { content, embeds } : content);
     // Premier morceau en réponse, le reste à la suite
-    await message.reply(withEmbeds(chunks[0], 0));
-    for (const [i, chunk] of chunks.entries()) if (i > 0) await message.channel.send(withEmbeds(chunk, i));
+    const sent = [await message.reply(withEmbeds(chunks[0], 0))];
+    for (const [i, chunk] of chunks.entries()) if (i > 0) sent.push(await message.channel.send(withEmbeds(chunk, i)));
+    // Chaque morceau envoyé permet de « Répondre » pour continuer ce fil
+    if (answer) rememberExchange(sent.map((m) => m.id), { question, answer, parent: previous });
   } catch (err) {
     console.error('Erreur AnythingLLM:', err);
     if (statusMsg) await statusMsg.delete().catch(() => {});
