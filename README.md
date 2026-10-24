@@ -76,6 +76,10 @@ Le paramètre `mode` de l'API n'accepte que `chat` et `query` : **`agent` n'y es
 
 L'agent peut enchaîner **plusieurs skills** sur une même demande (multi-step tool calling). Le bot n'a pas d'interface pour approuver un tool call : privilégie des skills qui s'exécutent sans approbation (c'est le cas de *Web Search*). Avant de brancher le bot, teste la question préfixée par `@agent` directement dans l'interface d'AnythingLLM.
 
+### Fils de conversation
+
+Chaque mention de Sotia ouvre une nouvelle conversation. Utiliser « Répondre » sur un message de Sotia (avec ou sans mention) continue le fil : les 3 derniers échanges (questions du joueur et réponses finales de Sotia, sans le pied de réponse) sont joints à la nouvelle question, et les questions du fil servent aussi aux recherches (documents, fiches, noms du wiki). La mémoire vient de Discord et non de l'historique d'AnythingLLM, qui contient consignes, extraits joints et `AUCUNE_INFO` ; chaque appel à AnythingLLM se fait donc dans une session neuve. Après un redémarrage, le bot retrouve le dernier échange en relisant les messages Discord.
+
 ### Statut « réflexion » éphémère
 
 Grâce au streaming, quand l'agent utilise des skills, le bot poste un **message de statut temporaire** (`🔧 …`) qui se met à jour au fil des skills utilisés, puis **se supprime** dès que la réponse définitive est prête. Si l'instance n'émet aucun événement de statut (mode chat simple ou version d'AnythingLLM qui ne les remonte pas via l'API), aucun message temporaire n'apparaît : seul le résultat final est envoyé.
