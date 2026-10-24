@@ -48,7 +48,7 @@ const NO_ANSWER_MARKER = 'AUCUNE_INFO';
 const DISCORD_FORMAT = "Pas de tableau Markdown (Discord ne les affiche pas), utilise des listes.";
 // Pas de règle plus stricte (« s'ils mentionnent seulement le sujet… ») : un modèle à réflexion
 // l'applique avec zèle et répond AUCUNE_INFO alors que le document donne la réponse
-const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis et des fiches éventuellement jointes. `
+const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis et des extraits ou fiches joints. `
   + `S'ils apportent la réponse, même en partie, réponds avec ce qu'ils contiennent. Réponds exactement `
   + `« ${NO_ANSWER_MARKER} » et rien d'autre seulement s'ils n'aident pas du tout à répondre. ${DISCORD_FORMAT})`;
 
@@ -259,9 +259,13 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
   return result;
 }
 
-// Diagnostic (DEBUG) : extraits que la recherche vectorielle ramène pour la question, avec leur
-// score et leur document, sans appeler le modèle. Montre si l'échec vient de la recherche elle-même.
-async function logVectorSearch(question) {
+// Recherche vectorielle sur la QUESTION SEULE. En mode query, AnythingLLM cherche avec tout le message
+// envoyé : la consigne, bien plus longue que la question, détermine alors la recherche et ramène des
+// extraits sans rapport. Le bot joint donc lui-même les meilleurs extraits trouvés ici.
+const MIN_EXTRACT_SCORE = 0.2; // en dessous, l'extrait n'a pas de vrai rapport avec la question
+const MAX_EXTRACTS = 4;
+const MAX_EXTRACT_CHARS = 1500;
+async function searchExtracts(question) {
   try {
     const res = await fetch(`${ANYTHINGLLM_URL}/api/v1/workspace/${ANYTHINGLLM_WORKSPACE}/vector-search`, {
       method: 'POST',
@@ -269,21 +273,31 @@ async function logVectorSearch(question) {
       body: JSON.stringify({ query: question, topN: 6 }),
     });
     const { results = [], message } = await res.json();
-    console.log(`  🔍 recherche vectorielle: ${results.length} extrait(s)${message ? ` (${message})` : ''}`);
-    for (const r of results) {
-      const score = typeof r.score === 'number' ? r.score.toFixed(3) : '?';
-      const excerpt = String(r.text || '').replace(/\s+/g, ' ').slice(0, 90);
-      console.log(`     ${score} | ${r.metadata?.title ?? '?'} | ${excerpt}`);
+    if (DEBUG) {
+      console.log(`  🔍 recherche vectorielle: ${results.length} extrait(s)${message ? ` (${message})` : ''}`);
+      for (const r of results) {
+        const score = typeof r.score === 'number' ? r.score.toFixed(3) : '?';
+        console.log(`     ${score} | ${r.metadata?.title ?? '?'} | ${String(r.text || '').replace(/\s+/g, ' ').slice(0, 90)}`);
+      }
     }
+    return results
+      .filter((r) => typeof r.score === 'number' && r.score >= MIN_EXTRACT_SCORE)
+      .slice(0, MAX_EXTRACTS)
+      .map((r) => ({
+        title: r.metadata?.title ?? '?',
+        // Préfixe « passage: » du modèle d'embedding et en-tête de métadonnées d'AnythingLLM retirés
+        text: String(r.text || '').replace(/^passage:\s*/, '').replace(/<document_metadata>[\s\S]*?<\/document_metadata>/, '')
+          .trim().slice(0, MAX_EXTRACT_CHARS),
+      }));
   } catch (err) {
     console.warn('  🔍 recherche vectorielle impossible:', err.message);
+    return [];
   }
 }
 
 // Routage à deux temps : documents d'abord (mode query), agent (recherche web) ensuite.
 // trace : chemin suivi, fiches jointes et outils appelés, pour le pied de réponse
 async function askWithRouting(message, sessionId, onStatus, trace = { tools: new Set() }) {
-  if (DEBUG) await logVectorSearch(message);
   if (!agentFallback) {
     trace.path = agentEnabled ? 'agent' : 'documents';
     return askAnythingLLM(message, sessionId, onStatus, { trace });
@@ -314,11 +328,18 @@ async function askWithRouting(message, sessionId, onStatus, trace = { tools: new
     trace.cards = known.map((k) => k.name);
   }
 
+  // Meilleurs extraits pour la question seule (voir searchExtracts)
+  const found = await searchExtracts(message);
+  const extracts = found.length
+    ? `\n\nExtraits de la base de connaissances :\n\n${found.map((e) => `[${e.title}]\n${e.text}`).join('\n\n')}`
+    : '';
+  if (found.length) console.log(`  📄 extrait(s) joint(s) : ${found.map((e) => e.title).join(', ')}`);
+
   trace.path = 'documents';
   // Session neuve, comme pour l'agent : l'historique du salon contient des « même question → AUCUNE_INFO »
   // que le modèle recopie sans lire les documents (réponse en 5 s, sans réflexion)
-  const answer = await askAnythingLLM(message + cards + QUERY_INSTRUCTION, `${sessionId}-query-${Date.now()}`, onStatus,
-    { mode: 'query', agent: false });
+  const answer = await askAnythingLLM(message + cards + extracts + QUERY_INSTRUCTION, `${sessionId}-query-${Date.now()}`,
+    onStatus, { mode: 'query', agent: false });
   if (answer && !isQueryRefusal(answer)) return answer;
 
   console.log('  ↪ rien dans les documents → relance en @agent');
