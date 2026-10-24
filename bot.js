@@ -315,7 +315,10 @@ async function askWithRouting(message, sessionId, onStatus, trace = { tools: new
   }
 
   trace.path = 'documents';
-  const answer = await askAnythingLLM(message + cards + QUERY_INSTRUCTION, sessionId, onStatus, { mode: 'query', agent: false });
+  // Session neuve, comme pour l'agent : l'historique du salon contient des « même question → AUCUNE_INFO »
+  // que le modèle recopie sans lire les documents (réponse en 5 s, sans réflexion)
+  const answer = await askAnythingLLM(message + cards + QUERY_INSTRUCTION, `${sessionId}-query-${Date.now()}`, onStatus,
+    { mode: 'query', agent: false });
   if (answer && !isQueryRefusal(answer)) return answer;
 
   console.log('  ↪ rien dans les documents → relance en @agent');
