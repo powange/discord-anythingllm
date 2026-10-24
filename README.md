@@ -89,6 +89,8 @@ L'endpoint `chest-items` est découpé en un document par sous-catégorie (ex. �
 
 L'endpoint `recommendations` (les emblèmes du jeu) donne un document « sommaire » des factions et campagnes, puis un document par campagne via `recommendations/<faction>/<campagne>`, avec une introduction expliquant ce que sont les emblèmes. Leurs images sont jointes sur Discord comme celles du coffre.
 
+Deux sources publiques complètent l'API : `steam-news` (annonces officielles de Rare publiées sur Steam, hors notes de version déjà couvertes) et `rarethief-guides` (guides récents du site communautaire Rare Thief). Chacune donne un document par élément et un sommaire daté ; les éléments sortis de la fenêtre (`STEAM_NEWS_DAYS`, `RARETHIEF_DAYS`) sont retirés, pour qu'une vieille annonce ne passe pas pour actuelle.
+
 Quand une question cite un objet du coffre ou un emblème par son nom exact, le bot joint sa fiche (catégorie, description, coût, prérequis ou paliers) à la question envoyée en mode query : la recherche vectorielle retrouve mal un nom propre précis. Les logs le signalent par une ligne `📇`.
 
 Le modèle d'embedding d'AnythingLLM doit être multilingue : le modèle par défaut, all-MiniLM-L6-v2, est entraîné sur l'anglais et rend la recherche quasi aléatoire sur des données en français (scores autour de 0,05 avec `DEBUG=true`). Changer de modèle oblige à tout réindexer : retirer les documents du workspace puis redémarrer le bot. Les logs préfixés `📚` indiquent le résultat de chaque synchro.
@@ -97,14 +99,16 @@ Le modèle d'embedding d'AnythingLLM doit être multilingue : le modèle par dé
 | --- | --- | --- |
 | `SOT_API_TOKEN` | vide | Jeton de l'API. Vide = synchronisation désactivée. |
 | `SOT_API_URL` | `https://achievements-sot.powange.com/api/agent` | Base des endpoints. |
-| `SOT_API_ENDPOINTS` | `release-notes,chest-items,recommendations` | Endpoints à synchroniser, séparés par des virgules. |
+| `SOT_API_ENDPOINTS` | `release-notes,chest-items,recommendations,steam-news,rarethief-guides` | Sources à synchroniser, séparées par des virgules. |
+| `STEAM_NEWS_DAYS` | `180` | Fenêtre (en jours) des annonces officielles synchronisées. |
+| `RARETHIEF_DAYS` | `90` | Fenêtre (en jours) des guides Rare Thief synchronisés. |
 | `SOT_SYNC_INTERVAL_HOURS` | `6` | Intervalle entre deux synchronisations. |
 
 N'ajoute pas un endpoint dont le contenu dépend du compte lié au jeton : tous les membres du Discord le recevraient comme une information générale. Les trois endpoints par défaut sont des catalogues communs à tous les joueurs.
 
 ### Skills d'agent
 
-Le dossier [`skills`](skills) contient des skills AnythingLLM pour Sea of Thieves : wiki (`sot-wiki`), guides Rare Thief (`sot-guides`), annonces officielles (`sot-news`) et état des serveurs (`sot-status`). Elles s'installent dans AnythingLLM, pas dans le bot : voir le [README des skills](skills/README.md). Le bot envoie directement à l'agent les questions sur leurs thèmes (personnages, lore, serveurs, actualités, événements, énigmes, guides).
+Le dossier [`skills`](skills) contient des skills AnythingLLM pour Sea of Thieves : wiki (`sot-wiki`), guides Rare Thief (`sot-guides`), annonces officielles (`sot-news`) et état des serveurs (`sot-status`). Elles s'installent dans AnythingLLM, pas dans le bot : voir le [README des skills](skills/README.md). Le bot envoie directement à l'agent les questions sur les personnages, le lore et l'état des serveurs ; les actualités et guides récents étant synchronisés dans la base, ces questions passent d'abord par le mode query, avec l'agent en relais.
 
 ## Lancer en local
 

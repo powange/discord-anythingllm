@@ -56,10 +56,9 @@ const AGENT_FIRST = new RegExp([
   'lore\\b', 'histoire\\b', 'légende de\\b', // pas « Légende des pirates » (un titre du jeu)
   // « le bateau de Flameheart » : navire d'un personnage (les cosmétiques disent « navire X », « de navire »)
   "(bateau|navire|vaisseau|galion|sloop|brigantin)s? (de|du|d')",
-  // Données en direct ou communautaires (skills statut, actualités, guides) : la base ne les a pas
+  // Données en direct (skill statut des serveurs) : la base ne peut pas les avoir. Les actualités et
+  // guides récents, eux, sont synchronisés dans la base : mode query d'abord, agent en relais.
   'serveurs?\\b', 'panne', 'down\\b', 'maintenance', 'joueurs (en ligne|connectés)', 'beard',
-  'actualités?\\b', 'news\\b', 'quoi de neuf', 'événements?\\b', 'twitch drops?', 'community weekend',
-  'énigmes?\\b', 'riddles?\\b', 'guides?\\b', 'soluces?\\b', 'défis\\b', 'challenges?\\b',
   // Début de mot : (?<!\p{L}) et non \b, qui ignore les lettres accentuées (« événement », « énigme »)
 ].map((p) => `(?<!\\p{L})${p}`).join('|'), 'iu');
 

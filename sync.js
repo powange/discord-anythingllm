@@ -9,7 +9,7 @@ const {
   ANYTHINGLLM_WORKSPACE,
   SOT_API_URL = 'https://achievements-sot.powange.com/api/agent',
   SOT_API_TOKEN,
-  SOT_API_ENDPOINTS = 'release-notes,chest-items,recommendations',
+  SOT_API_ENDPOINTS = 'release-notes,chest-items,recommendations,steam-news,rarethief-guides',
   SOT_SYNC_INTERVAL_HOURS = '6',
 } = process.env;
 
@@ -361,11 +361,143 @@ async function syncRecommendations(docs) {
   return `${count} emblèmes, ${sources.size} campagnes — ${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)${removed}`;
 }
 
+// --- Sources publiques hors API SoT : annonces officielles (Steam) et guides récents (Rare Thief) ---
+// Fenêtre glissante : ce qui en sort est retiré, pour qu'une vieille annonce ne passe pas pour actuelle.
+const STEAM_NEWS_DAYS = Number(process.env.STEAM_NEWS_DAYS) || 180;
+const RARETHIEF_DAYS = Number(process.env.RARETHIEF_DAYS) || 90;
+const PUBLIC_UA = 'AnythingLLM-SoT-Sync/1.0 (powange)';
+const day = (d) => new Date(d).toISOString().slice(0, 10);
+
+// BBCode Steam → texte
+function bbcodeToText(bbcode) {
+  return String(bbcode)
+    .replace(/\[img[^\]]*\][\s\S]*?\[\/img\]/gi, '')
+    .replace(/\[h[1-6][^\]]*\]/gi, '\n## ')
+    .replace(/\[\*\]/g, '\n- ')
+    .replace(/\[\/\*\]/g, '')
+    .replace(/\[\/(p|h[1-6]|list|olist)\]/gi, '\n')
+    .replace(/\[url=[^\]]*\]([\s\S]*?)\[\/url\]/gi, '$1')
+    .replace(/\[\/?[a-z0-9]+(=[^\]]*)?\]/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// HTML WordPress → texte
+function htmlToText(html) {
+  const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '…', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“', ndash: '–', mdash: '—' };
+  return String(html)
+    .replace(/<(script|style|figure|iframe)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<h([1-6])[^>]*>/gi, (_, n) => `\n${'#'.repeat(Math.min(Number(n), 4))} `)
+    .replace(/<li[^>]*>/gi, '\n- ')
+    .replace(/<(br|\/p|\/h[1-6]|\/ul|\/ol|\/div)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&([a-z]+);/gi, (m, name) => entities[name.toLowerCase()] ?? m)
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// Crée/met à jour une série de documents + un sommaire, puis retire ceux sortis de la fenêtre
+async function syncSeries(docs, { base, indexSource, index, items, label }) {
+  await upsertDoc(docs, { ...index, docSource: indexSource, label: `${label} (sommaire)` });
+  const counts = { 'mis à jour': 0, inchangé: 0 };
+  for (const item of items) {
+    try {
+      counts[await upsertDoc(docs, { ...item, label: `${label} ${item.date}` })] += 1;
+    } catch (err) {
+      console.error(`📚 sync ${label} « ${item.title} » en échec:`, err.message);
+    }
+  }
+  const removed = await removeStale(docs.filter((doc) => doc.docSource !== indexSource), base,
+    new Set(items.map((i) => i.docSource)));
+  return `${items.length} document(s) — ${counts['mis à jour']} indexé(s), ${counts.inchangé} inchangé(s)${removed}`;
+}
+
+// Annonces officielles de Rare (flux Steam), sauf les notes de version déjà synchronisées
+async function syncSteamNews(docs) {
+  const params = new URLSearchParams({
+    appid: '1172620', count: '100', maxlength: '0', feeds: 'steam_community_announcements', format: 'json',
+  });
+  const res = await fetch(`https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?${params}`);
+  if (!res.ok) throw new Error(`Steam HTTP ${res.status}`);
+  const since = Date.now() - STEAM_NEWS_DAYS * 86400 * 1000;
+  const news = ((await res.json()).appnews?.newsitems ?? [])
+    .filter((n) => n.date * 1000 >= since && !/release notes/i.test(n.title));
+
+  const base = 'steam-news://1172620'; // identifiant stable (les URL Steam changent de domaine)
+  const items = news.map((n) => ({
+    docSource: `${base}/${n.gid}`,
+    date: day(n.date * 1000),
+    title: `Annonce officielle Sea of Thieves — ${n.title} (${day(n.date * 1000)})`,
+    text: `# Annonce officielle de Rare (Sea of Thieves) : ${n.title}\n\n`
+      + `Publiée le ${day(n.date * 1000)} (source : ${n.url}).\n\n${bbcodeToText(n.contents)}`,
+  }));
+  const index = {
+    title: `${DOC_PREFIX}actualités officielles`,
+    text: [
+      '# Actualités officielles de Sea of Thieves',
+      '',
+      'Quoi de neuf sur Sea of Thieves : dernières annonces officielles de Rare (événements, Community Weekend, '
+        + 'Twitch Drops, saisons, concours), de la plus récente à la plus ancienne :',
+      '',
+      ...news.map((n) => `- ${day(n.date * 1000)} : ${n.title}`),
+    ].join('\n'),
+  };
+  return syncSeries(docs, { base, indexSource: base, index, items, label: 'steam-news' });
+}
+
+// Guides récents du site communautaire Rare Thief (WordPress)
+async function syncRareThief(docs) {
+  const base = 'https://rarethief.com';
+  const after = new Date(Date.now() - RARETHIEF_DAYS * 86400 * 1000).toISOString().slice(0, 19);
+  const posts = [];
+  for (let page = 1; ; page += 1) {
+    const params = new URLSearchParams({ after, per_page: '100', page: String(page), _fields: 'title,link,date,content' });
+    const res = await fetch(`${base}/wp-json/wp/v2/posts?${params}`, { headers: { 'User-Agent': PUBLIC_UA } });
+    if (!res.ok) throw new Error(`Rare Thief HTTP ${res.status}`);
+    const batch = await res.json();
+    posts.push(...batch);
+    if (batch.length < 100) break;
+  }
+
+  const items = posts.map((p) => {
+    const title = htmlToText(p.title.rendered);
+    return {
+      docSource: p.link,
+      date: day(p.date),
+      title: `Guide Rare Thief — ${title} (${day(p.date)})`,
+      text: `# Guide communautaire Sea of Thieves (Rare Thief) : ${title}\n\n`
+        + `Publié le ${day(p.date)} sur rarethief.com (source : ${p.link}).\n\n${htmlToText(p.content.rendered)}`,
+    };
+  });
+  const indexSource = `${base}/guides-recents`; // source synthétique du sommaire
+  const index = {
+    title: `${DOC_PREFIX}guides récents Rare Thief`,
+    text: [
+      '# Guides récents de Sea of Thieves (Rare Thief)',
+      '',
+      'Guides communautaires récents du site Rare Thief (énigmes, événements, défis Bilge Rats du mois, '
+        + 'Tall Tales), du plus récent au plus ancien :',
+      '',
+      ...items.map((i) => `- ${i.date} : ${i.title.replace(/^Guide Rare Thief — | \(\d{4}-\d{2}-\d{2}\)$/g, '')}`),
+    ].join('\n'),
+  };
+  return syncSeries(docs, { base, indexSource, index, items, label: 'rarethief' });
+}
+
 // Endpoints découpés en plusieurs documents ; les autres donnent un seul document
 const SPLIT_SYNCS = {
   'release-notes': syncReleaseNotes,
   'chest-items': syncChestItems,
   recommendations: syncRecommendations,
+  'steam-news': syncSteamNews,
+  'rarethief-guides': syncRareThief,
 };
 
 async function syncAll(endpoints) {
