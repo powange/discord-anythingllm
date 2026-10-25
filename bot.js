@@ -444,12 +444,14 @@ function askAgent(message, sessionId, onStatus, wikiTitles = [], trace) {
 const TOOL_NAMES = {
   'sot-wiki': 'wiki', 'sot-news': 'annonces officielles', 'sot-guides': 'guides Rare Thief',
   'sot-status': 'statut des serveurs', 'web-browsing': 'recherche web', 'web-scraping': 'page web',
-  'rag-memory': 'documents', 'document-summarizer': 'documents',
+  'rag-memory': 'documents', 'document-summarizer': 'documents', 'sot-wiki-npc': 'wiki (PNJ)',
 };
+// Skill sans libellé : nom technique rendu lisible (« sot-wiki-ships » → « wiki ships »)
+const toolName = (t) => TOOL_NAMES[t] ?? t.replace(/^sot-/, '').replace(/[-_]+/g, ' ');
 const ROUTES = { documents: '📚 base de connaissances', agent: '🔎 agent', 'documents→agent': '📚→🔎 agent' };
 function responseFooter(ms, trace) {
   const parts = [`⏱️ ${(ms / 1000).toFixed(1).replace('.', ',')} s`];
-  const tools = [...new Set([...trace.tools].map((t) => TOOL_NAMES[t] ?? t))];
+  const tools = [...new Set([...trace.tools].map(toolName))];
   const route = ROUTES[trace.path];
   if (route) parts.push(tools.length ? `${route} : ${tools.join(', ')}` : route);
   if (trace.cards?.length) parts.push(`📇 ${trace.cards.join(', ')}`);
