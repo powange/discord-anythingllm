@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } from 'discord.js';
 import { startDocSync, findItemImages, findWikiNames, findCategoryCards } from './sync.js';
-import { stormCard } from './storm.js';
+import { stormCard, withDiscordTimestamps } from './storm.js';
 
 // Version du code en cours d'exécution : empreinte des sources (le .git n'est pas dans l'image).
 // Exposée par /health pour vérifier qu'un déploiement est bien en place (même calcul : scripts/wait-deploy.sh).
@@ -403,7 +403,7 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
   // joint en fiche ; le modèle ne connaît pas l'heure et un document serait périmé en quelques minutes
   if (STORM_INTENT.test(search)) {
     try {
-      const card = await stormCard();
+      const { text: card, times } = await stormCard();
       console.log('  🌩️ fiche tempête jointe');
       trace.path = 'storm';
       // Mode chat et non query : en query, AnythingLLM refuse sans appeler le modèle quand sa propre
@@ -411,9 +411,11 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
       const answer = await askAnythingLLM(`${message}\n\nFiche calculée à l'instant :\n\n${card}\n\n(Consigne : réponds `
         + 'uniquement à partir de cette fiche. Garde les noms anglais des îles tels quels, sans les traduire. '
         + 'Ne parle pas de « fiche » : présente l\'information comme venant des prévisions de Merfolk\'s Lullaby. '
+        + 'Recopie les heures telles qu\'écrites dans la fiche (HH:MM). '
         + `${DISCORD_FORMAT})`, `${sessionId}-storm-${Date.now()}`, onStatus, { mode: 'chat', agent: false });
       trace.queryAnswer = answer;
-      if (answer && !isQueryRefusal(answer)) return answer;
+      // Heures → horodatages Discord (fuseau de chaque lecteur, « dans X minutes » mis à jour en direct)
+      if (answer && !isQueryRefusal(answer)) return withDiscordTimestamps(answer, times);
     } catch (err) {
       console.warn('  🌩️ prévisions de la tempête indisponibles :', err.message);
     }
@@ -571,7 +573,8 @@ async function answerQuestion(question, { sessionId, onStatus, thread = null }) 
   return {
     answer, trace, ms,
     footer: responseFooter(ms, trace),
-    items: findItemImages(answer || '', 4, { properNoun: true }),
+    // Pas d'objets du coffre à illustrer dans une réponse sur la tempête (noms d'îles, heures)
+    items: trace.path?.startsWith('storm') ? [] : findItemImages(answer || '', 4, { properNoun: true }),
   };
 }
 

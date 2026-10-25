@@ -240,6 +240,12 @@ export function findItemImages(text, limit = 4, { properNoun = false } = {}) {
     for (let start = lower.indexOf(name); start !== -1; start = lower.indexOf(name, start + 1)) {
       const first = text[start];
       if (properNoun && first === first.toLowerCase()) continue;
+      // En début de phrase, la majuscule ne prouve rien (« À l'heure actuelle » → emote « À l'heure ») :
+      // un nom court n'y est accepté que mis en valeur (gras, italique), comme le modèle cite un objet
+      if (properNoun && name.length < 15 && !/[*_]/.test(text[start - 1] ?? '')) {
+        const before = text.slice(0, start).replace(/[\s>#-]+$/, '');
+        if (before === '' || /[.!?:\n]$/.test(before)) continue;
+      }
       matches.push({ ...item, start, end: start + name.length });
     }
   }

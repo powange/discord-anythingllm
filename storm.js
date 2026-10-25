@@ -7,7 +7,6 @@ const USER_AGENT = 'discord-anythingllm (https://github.com/powange/discord-anyt
 const FORECAST_TTL_MS = 24 * 60_000;
 const MIN_FORECAST_AHEAD_MS = 20 * 60_000; // prévisions trop courtes : rafraîchissement forcé
 const TIME_ZONE = 'Europe/Paris';
-const NEXT_ISLANDS = 8;
 
 let forecast = null; // [{ at, elementId }] triées par heure
 let loadedAt = 0;
@@ -60,6 +59,8 @@ function islandName(id) {
 
 // Fiche « tempête » pour le modèle : heure actuelle, île couverte maintenant, prochaines îles avec
 // l'heure d'arrivée. Calculée à l'instant de la question (le modèle ne connaît pas l'heure).
+// Renvoie { text, times } : times associe chaque heure « HH:MM » de la fiche à son instant exact,
+// pour la remplacer ensuite par un horodatage Discord (withDiscordTimestamps).
 export async function stormCard() {
   const now = Date.now();
   let positions = await getForecast(false);
@@ -77,17 +78,46 @@ export async function stormCard() {
   }
 
   const name = async (p) => (p.elementId && (await islandName(p.elementId))) || 'en pleine mer';
-  const time = (ms) => new Date(ms).toLocaleTimeString('fr-FR', { timeZone: TIME_ZONE, hour: '2-digit', minute: '2-digit' });
+  const times = new Map();
+  const time = (ms) => {
+    const hhmm = new Date(ms).toLocaleTimeString('fr-FR', { timeZone: TIME_ZONE, hour: '2-digit', minute: '2-digit' });
+    if (!times.has(hhmm)) times.set(hhmm, Math.round(ms / 1000));
+    return hhmm;
+  };
+  const delay = (min) => (min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? ` ${String(min % 60).padStart(2, '0')}` : ''}`);
+  const horizon = positions[positions.length - 1].at;
   const lines = [
     `Tempête de Sea of Thieves (« the Storm »), prévisions de Merfolk's Lullaby — il est actuellement ${time(now)} (heure de Paris).`,
     `Position actuelle de la tempête : ${await name(current)}.`,
-    'Prochaines îles sur son trajet :',
+    '',
+    // Positions précalculées : le modèle se trompait en déduisant lui-même « où sera-t-elle dans 1 heure ? »
+    'Position prévue dans :',
   ];
-  for (const p of route.slice(1, NEXT_ISLANDS + 1)) {
-    lines.push(`- ${await name(p)} : vers ${time(p.at)} (dans ${Math.max(1, Math.ceil((p.at - now) / 60_000))} min)`);
+  for (let min = 15; now + min * 60_000 <= horizon; min += 15) {
+    let at = current;
+    for (const p of positions) if (p.at <= now + min * 60_000) at = p;
+    lines.push(`- ${delay(min)} (vers ${time(now + min * 60_000)}) : ${await name(at)}`);
+  }
+  lines.push('', 'Toutes les prochaines îles sur son trajet :');
+  for (const p of route.slice(1)) {
+    lines.push(`- ${await name(p)} : vers ${time(p.at)} (dans ${delay(Math.max(1, Math.ceil((p.at - now) / 60_000)))})`);
   }
   if (route.length === 1) lines.push('- aucune autre île dans les prévisions disponibles');
-  lines.push(`Prévisions disponibles jusqu'à ${time(positions[positions.length - 1].at)} environ ; `
-    + 'la tempête peut être décalée de quelques minutes en jeu. Les noms d\'îles sont les noms anglais officiels.');
-  return lines.join('\n');
+  lines.push('', `Les prévisions s'arrêtent vers ${time(horizon)} (dans ${delay(Math.round((horizon - now) / 60_000))}) : `
+    + 'au-delà, la position de la tempête n\'est pas connue. Elle peut être décalée de quelques minutes en jeu. '
+    + 'Les noms d\'îles sont les noms anglais officiels.');
+  return { text: lines.join('\n'), times };
+}
+
+// Remplace les heures de la fiche citées dans la réponse par des horodatages Discord : « 05:28 » devient
+// <t:…:t> (heure locale de chaque lecteur) et le « (dans 16 min) » qui suit devient <t:…:R> (« dans
+// 16 minutes », mis à jour en direct par Discord). Fait par le bot : le modèle recopierait mal ces nombres.
+export function withDiscordTimestamps(answer, times) {
+  return answer
+    .replace(/\s*\(heure de Paris\)/gi, '')
+    .replace(/(?<!\d)(\d{1,2})[:h](\d{2})(?!\d)(\s*\((?:soit\s+)?dans\s+(?:environ\s+)?[^)]*\))?/g, (match, h, m, delay) => {
+      const s = times.get(`${h.padStart(2, '0')}:${m}`);
+      if (!s) return match;
+      return `<t:${s}:t>${delay ? ` (<t:${s}:R>)` : ''}`;
+    });
 }
