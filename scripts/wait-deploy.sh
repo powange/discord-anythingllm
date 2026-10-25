@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Attend que le bot déployé exécute la même version que le code local (empreinte de bot.js + sync.js,
+# Attend que le bot déployé exécute la même version que le code local (empreinte de bot.js + sync.js + storm.js,
 # calculée comme au démarrage du bot), via GET /health de l'interface de test.
 # Usage : scripts/wait-deploy.sh [url] [délai max en s]   — jeton lu dans TEST_API_TOKEN du .env
 set -euo pipefail
@@ -9,7 +9,7 @@ MAX="${2:-600}"
 TOKEN=$(grep -E '^TEST_API_TOKEN=' .env | cut -d= -f2- | tr -d "\"' \r")
 WANT=$(node -e "
   const { createHash } = require('node:crypto'); const { readFileSync } = require('node:fs');
-  console.log(createHash('sha256').update(['bot.js', 'sync.js'].map((f) => readFileSync(f)).join('\n')).digest('hex').slice(0, 12));")
+  console.log(createHash('sha256').update(['bot.js', 'sync.js', 'storm.js'].map((f) => readFileSync(f)).join('\n')).digest('hex').slice(0, 12));")
 echo "Version attendue : $WANT"
 for ((t = 0; t < MAX; t += 10)); do
   GOT=$(curl -s -m 5 -H "Authorization: Bearer $TOKEN" "$URL/health" | node -e "

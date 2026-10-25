@@ -4,11 +4,12 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } from 'discord.js';
 import { startDocSync, findItemImages, findWikiNames, findCategoryCards } from './sync.js';
+import { stormCard } from './storm.js';
 
-// Version du code en cours d'exécution : empreinte de bot.js + sync.js (le .git n'est pas dans l'image).
-// Exposée par /health pour vérifier qu'un déploiement est bien en place.
+// Version du code en cours d'exécution : empreinte des sources (le .git n'est pas dans l'image).
+// Exposée par /health pour vérifier qu'un déploiement est bien en place (même calcul : scripts/wait-deploy.sh).
 const CODE_VERSION = createHash('sha256')
-  .update(['bot.js', 'sync.js'].map((f) => readFileSync(new URL(`./${f}`, import.meta.url))).join('\n'))
+  .update(['bot.js', 'sync.js', 'storm.js'].map((f) => readFileSync(new URL(`./${f}`, import.meta.url))).join('\n'))
   .digest('hex').slice(0, 12);
 const STARTED_AT = new Date().toISOString();
 
@@ -78,7 +79,6 @@ const AGENT_FIRST = new RegExp([
   // Données en direct (skills statut des serveurs et actualités) : l'agent interroge la source à jour.
   // Les annonces synchronisées, en anglais, sont mal retrouvées par une question en français.
   'serveurs?\\b', 'panne', 'down\\b', 'maintenance', 'joueurs (en ligne|connectés)', 'beard',
-  'tempêtes?\\b', 'storm\\b',
   'év[éè]nements?\\b', 'quoi de neuf', 'actualités?\\b', 'news\\b', 'twitch drops?', 'community weekend',
   // Début de mot : (?<!\p{L}) et non \b, qui ignore les lettres accentuées (« événement », « énigme »)
 ].map((p) => `(?<!\\p{L})${p}`).join('|'), 'iu');
@@ -399,6 +399,25 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
     return askAnythingLLM(message, sessionId, onStatus, { trace });
   }
 
+  // Tempête : le bot calcule lui-même position et trajet à l'instant de la question (storm.js) et les
+  // joint en fiche ; le modèle ne connaît pas l'heure et un document serait périmé en quelques minutes
+  if (STORM_INTENT.test(search)) {
+    try {
+      const card = await stormCard();
+      console.log('  🌩️ fiche tempête jointe');
+      trace.path = 'storm';
+      const answer = await askAnythingLLM(`${message}\n\nFiche calculée à l'instant :\n\n${card}${QUERY_INSTRUCTION}`,
+        `${sessionId}-query-${Date.now()}`, onStatus, { mode: 'query', agent: false });
+      trace.queryAnswer = answer;
+      if (answer && !isQueryRefusal(answer)) return answer;
+    } catch (err) {
+      console.warn('  🌩️ prévisions de la tempête indisponibles :', err.message);
+    }
+    // Repli : l'agent et sa skill sot-storm (indication dans TOOL_HINTS)
+    trace.path = trace.path === 'storm' ? 'storm→agent' : 'agent';
+    return askAgent(message, sessionId, onStatus, [], trace);
+  }
+
   // Pages du wiki citées par leur nom (personnages, lieux…) : indice donné à l'agent, qui cherche en anglais
   const wikiTitles = findWikiNames(search);
   if (AGENT_FIRST.test(question)) {
@@ -481,6 +500,8 @@ const TOOL_HINTS = [
 ];
 // Questions de comptage ou de liste : on y joint les fiches de catégorie du coffre
 const COUNT_INTENT = /(?<!\p{L})(combien|nombre|liste|lister|quels sont|quelles sont|how many)(?!\p{L})/iu;
+// Questions sur la tempête : fiche calculée par le bot (storm.js)
+const STORM_INTENT = /(?<!\p{L})(tempêtes?|storm)(?!\p{L})/iu;
 
 async function askAgent(message, sessionId, onStatus, wikiTitles = [], trace) {
   const hints = [
@@ -515,7 +536,10 @@ const TOOL_NAMES = {
 };
 // Skill sans libellé : nom technique rendu lisible (« sot-wiki-ships » → « wiki ships »)
 const toolName = (t) => TOOL_NAMES[t] ?? t.replace(/^sot-/, '').replace(/[-_]+/g, ' ');
-const ROUTES = { documents: '📚 base de connaissances', agent: '🔎 agent', 'documents→agent': '📚→🔎 agent' };
+const ROUTES = {
+  documents: '📚 base de connaissances', agent: '🔎 agent', 'documents→agent': '📚→🔎 agent',
+  storm: '🌩️ prévisions de la tempête (Merfolk\'s Lullaby)', 'storm→agent': '🌩️→🔎 agent',
+};
 function responseFooter(ms, trace) {
   const parts = [`⏱️ ${(ms / 1000).toFixed(1).replace('.', ',')} s`];
   const tools = [...new Set([...trace.tools].map(toolName))];
