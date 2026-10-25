@@ -458,10 +458,26 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
 // Session neuve à chaque appel : tout historique (AUCUNE_INFO, réponses précédentes) pousse
 // sinon le modèle à recopier une ancienne réponse au lieu d'appeler ses outils.
 // Pas « fais une recherche web » : l'agent doit pouvoir choisir une skill spécialisée (ex. PNJ du wiki)
+// Indications de skill selon le sujet : sans elles, l'agent répondait à une énigme avec les annonces
+// officielles (« pas d'énigme »), ou à une question de mécanique de mémoire, sans source
+const TOOL_HINTS = [
+  [/(?<!\p{L})(énigmes?|riddles?|guides?|soluces?|solutions?|défis|challenges?|journaux|journals?)(?!\p{L})/iu,
+    'Pour une énigme, un guide, un défi ou des emplacements, utilise la compétence de guides Rare Thief (sot-guides).'],
+  [/(?<!\p{L})(comment|fonctionne|marche|mécaniques?|peut-on|peux-on|est-ce qu'on peut|réparer)(?!\p{L})/iu,
+    'Pour le fonctionnement du jeu, cherche dans le wiki (sot-wiki).'],
+];
+
 async function askAgent(message, sessionId, onStatus, wikiTitles = [], trace) {
-  const hint = wikiTitles.length ? ` Pages du wiki probablement concernées : ${wikiTitles.join(', ')}.` : '';
+  const hints = [
+    ...(wikiTitles.length ? [`Pages du wiki probablement concernées : ${wikiTitles.join(', ')}.`] : []),
+    // Une seule indication, la plus spécifique (ordre de TOOL_HINTS) : « comment résoudre l'énigme » → guides
+    ...TOOL_HINTS.filter(([re]) => re.test(message)).slice(0, 1).map(([, h]) => h),
+  ];
   const agentQuestion = `${message}\n\n(Consigne : utilise en priorité une de tes compétences spécialisées `
-    + `si l'une correspond à la question, sinon fais une recherche sur le web.${hint} ${DISCORD_FORMAT})`;
+    + `si l'une correspond à la question, sinon fais une recherche sur le web. ${hints.join(' ')}${hints.length ? ' ' : ''}`
+    // Sources non fiables : on accepte de répondre, mais en le disant
+    + 'Si ta réponse ne vient pas d\'une de tes compétences (recherche web générale ou connaissances personnelles), '
+    + `précise qu'elle n'est pas vérifiée à 100 % et cite la source s'il y en a une. ${DISCORD_FORMAT})`;
   const ask = () => askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true, trace });
   const answer = await ask();
   if (answer) return answer;
@@ -488,6 +504,12 @@ function responseFooter(ms, trace) {
   if (route) parts.push(tools.length ? `${route} : ${tools.join(', ')}` : route);
   if (trace.cards?.length) parts.push(`📇 ${trace.cards.join(', ')}`);
   if (trace.thread) parts.push(`🧵 suite de la conversation`);
+  // Agent sans source fiable : réponse de mémoire, ou seulement une recherche web générale
+  if (trace.path?.includes('agent')) {
+    const webOnly = [...trace.tools].every((t) => t === 'web-browsing' || t === 'web-scraping');
+    if (!trace.tools.size) parts.push('⚠️ non vérifiée (sans source)');
+    else if (webOnly) parts.push('⚠️ source web non vérifiée');
+  }
   return `-# ${parts.join(' · ')}`;
 }
 

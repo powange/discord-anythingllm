@@ -243,11 +243,16 @@ export function findItemImages(text, limit = 4, { properNoun = false } = {}) {
       matches.push({ ...item, start, end: start + name.length });
     }
   }
-  // Le nom le plus long l'emporte : « Barre amirale rituelle » plutôt que « Barre amirale »
+  // Le nom le plus long l'emporte : « Barre amirale rituelle » plutôt que « Barre amirale ».
+  // Un doublon d'image (même objet cité en FR puis en EN) n'est pas gardé, mais son passage reste
+  // occupé : sinon « Ceremonial Admiral Wheel » laisserait passer « Admiral Wheel », un autre objet.
   matches.sort((a, b) => (b.end - b.start) - (a.end - a.start));
   const kept = [];
+  const occupied = [];
   for (const m of matches) {
-    if (!kept.some((k) => (m.start < k.end && k.start < m.end) || k.image === m.image)) kept.push(m);
+    if (occupied.some((o) => m.start < o.end && o.start < m.end)) continue;
+    occupied.push(m);
+    if (!kept.some((k) => k.image === m.image)) kept.push(m);
   }
   return kept.sort((a, b) => a.start - b.start).slice(0, limit);
 }
@@ -256,10 +261,26 @@ export function findItemImages(text, limit = 4, { properNoun = false } = {}) {
 // le « coffre » (sinon le modèle comprend « coffres au trésor »). Images et identifiants retirés.
 async function syncChestItems(docs) {
   // Sommaire JSON (catégories, sous-catégories, libellés FR/EN), puis une sous-catégorie par appel
-  const { categories = [] } = await api('chest-items', { md: false });
+  const { count, categories = [] } = await api('chest-items', { md: false });
   if (!categories.length) throw new Error('API chest-items: aucune catégorie');
 
   const base = `${SOT_API_URL}/chest-items`;
+  // Sommaire : catégories et sous-catégories avec leur nombre d'objets, pour les questions
+  // « combien de… » (sans lui, le modèle comptait les pages d'une catégorie du wiki : faux)
+  const label = (x) => `${x.label?.fr ?? x.key}${x.label?.en && x.label.en !== x.label?.fr ? ` / ${x.label.en}` : ''}`;
+  await upsertDoc(docs, {
+    docSource: base, title: `${DOC_PREFIX}coffre du pirate, catégories et nombre d'objets`, label: 'chest-items (sommaire)',
+    text: [
+      '# Coffre du pirate de Sea of Thieves : catégories et nombre d\'objets',
+      '',
+      `Le coffre du pirate (« Pirate's Chest ») contient ${count} objets cosmétiques et d'équipement, répartis par `
+        + 'catégorie et sous-catégorie (nombre d\'objets entre parenthèses) :',
+      '',
+      ...categories.map((c) => `- ${label(c)} : ${c.count} objets (${(c.subcategories ?? [])
+        .map((s) => `${label(s)} ${s.count}`).join(' ; ')})`),
+    ].join('\n'),
+  });
+
   const images = new Map();
   const sources = new Set();
   const counts = { 'mis à jour': 0, inchangé: 0 };
@@ -296,8 +317,8 @@ async function syncChestItems(docs) {
 
   if (images.size) imageSets.set('chest-items', images);
 
-  // Ancien document unique et sous-catégories disparues de l'API
-  const removed = await removeStale(docs, base, sources);
+  // Sous-catégories disparues de l'API (le sommaire porte la source de base : il n'est pas périmé)
+  const removed = await removeStale(docs.filter((doc) => doc.docSource !== base), base, sources);
   return `${sources.size} sous-catégories — ${counts['mis à jour']} indexée(s), ${counts.inchangé} inchangée(s)${removed}`;
 }
 
