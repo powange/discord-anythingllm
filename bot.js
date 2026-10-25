@@ -78,6 +78,7 @@ const AGENT_FIRST = new RegExp([
   // Données en direct (skills statut des serveurs et actualités) : l'agent interroge la source à jour.
   // Les annonces synchronisées, en anglais, sont mal retrouvées par une question en français.
   'serveurs?\\b', 'panne', 'down\\b', 'maintenance', 'joueurs (en ligne|connectés)', 'beard',
+  'tempêtes?\\b', 'storm\\b',
   'év[éè]nements?\\b', 'quoi de neuf', 'actualités?\\b', 'news\\b', 'twitch drops?', 'community weekend',
   // Début de mot : (?<!\p{L}) et non \b, qui ignore les lettres accentuées (« événement », « énigme »)
 ].map((p) => `(?<!\\p{L})${p}`).join('|'), 'iu');
@@ -469,6 +470,8 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
 // Formulées comme des ordres avec un exemple de recherche : une simple suggestion était ignorée
 // (sot-news choisi pour l'énigme, sa description citant « Community Weekend »)
 const TOOL_HINTS = [
+  [/(?<!\p{L})(tempêtes?|storm)(?!\p{L})/iu,
+    'Cette question porte sur la tempête : appelle l\'outil sot-storm, qui donne sa position et son trajet prévu.'],
   [/(?<!\p{L})(énigmes?|riddles?|guides?|soluces?|solutions?|défis|challenges?|journaux|journals?)(?!\p{L})/iu,
     'Cette question porte sur une énigme, un guide ou un défi : appelle d\'abord l\'outil sot-guides avec une '
       + 'recherche en anglais (ex. « Community Weekend riddle », « Bilge Rats challenges »), pas sot-news.'],
@@ -508,6 +511,7 @@ const TOOL_NAMES = {
   'sot-wiki': 'wiki', 'sot-news': 'annonces officielles', 'sot-guides': 'guides Rare Thief',
   'sot-status': 'statut des serveurs', 'web-browsing': 'recherche web', 'web-scraping': 'page web',
   'rag-memory': 'documents', 'document-summarizer': 'documents', 'sot-wiki-npc': 'wiki (PNJ)',
+  'sot-storm': 'tempête',
 };
 // Skill sans libellé : nom technique rendu lisible (« sot-wiki-ships » → « wiki ships »)
 const toolName = (t) => TOOL_NAMES[t] ?? t.replace(/^sot-/, '').replace(/[-_]+/g, ' ');

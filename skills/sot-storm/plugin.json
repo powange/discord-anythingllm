@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Mintplex-Labs/anything-llm/refs/heads/master/server/utils/agents/imported-manifest.schema.json",
+  "active": true,
+  "hubId": "sot-storm",
+  "name": "Tempête Sea of Thieves",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Donne la position actuelle de la tempête (« the Storm ») dans Sea of Thieves et son trajet prévu : l'île qu'elle couvre maintenant, puis les prochaines îles avec l'heure d'arrivée, sur environ 1 h 20 (prévisions de Merfolk's Lullaby). À utiliser pour « où est la tempête ? », « où va la tempête ? », « quel est le trajet de la tempête ? », « la tempête va-t-elle passer sur telle île ? ». by powange",
+  "author": "powange",
+  "license": "MIT",
+  "examples": [
+    {
+      "prompt": "Où est la tempête en ce moment ?",
+      "call": "{}"
+    },
+    {
+      "prompt": "Quel est le futur trajet de la tempête ?",
+      "call": "{}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "islands": {
+        "description": "Optionnel : nombre de prochaines îles à annoncer (6 par défaut, 12 au maximum).",
+        "type": "number"
+      }
+    }
+  },
+  "imported": true
+}

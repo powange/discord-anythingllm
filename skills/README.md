@@ -8,6 +8,7 @@ lecture en un seul appel, et tronque son résultat à ~6 000 caractères pour un
 | [`sot-wiki`](sot-wiki) | API MediaWiki de [seaofthieves.wiki.gg](https://seaofthieves.wiki.gg) | personnages, navires du lore, îles, quêtes, créatures, mécaniques |
 | [`sot-guides`](sot-guides) | API WordPress de [Rare Thief](https://rarethief.com) (1000+ guides) | solutions d'énigmes, Tall Tales pas à pas, défis Bilge Rats du mois |
 | [`sot-news`](sot-news) | Annonces officielles de Rare, via l'API des actualités Steam | quoi de neuf, événements, Twitch Drops, Community Weekend |
+| [`sot-storm`](sot-storm) | API GraphQL publique de [Merfolk's Lullaby](https://www.merfolkslullaby.com/map?tab=weather) (même source que le plugin streamdeck-sot) | où est la tempête, son trajet prévu sur ~1 h 20 |
 | [`sot-status`](sot-status) | API de la [page de statut officielle](https://status.seaofthieves.com) + joueurs Steam | serveurs en panne, maintenance, incidents récents, joueurs en ligne |
 
 Les sources sont en anglais : l'agent cherche en anglais et répond en français.
@@ -20,12 +21,12 @@ Sources écartées après analyse : le site officiel (actualités générées da
 
 ## Installation (AnythingLLM Desktop sous Windows)
 
-Dans PowerShell, sur la machine qui fait tourner AnythingLLM (installe ou met à jour les quatre skills) :
+Dans PowerShell, sur la machine qui fait tourner AnythingLLM (installe ou met à jour toutes les skills) :
 
 ```powershell
 $root = "$env:APPDATA\anythingllm-desktop\storage\plugins\agent-skills"
 $base = "https://raw.githubusercontent.com/powange/discord-anythingllm/main/skills"
-foreach ($skill in "sot-wiki", "sot-guides", "sot-news", "sot-status") {
+foreach ($skill in "sot-wiki", "sot-guides", "sot-news", "sot-status", "sot-storm") {
   New-Item -ItemType Directory -Force "$root\$skill" | Out-Null
   foreach ($f in "plugin.json", "handler.js") {
     Invoke-WebRequest "$base/$skill/$f" -OutFile "$root\$skill\$f" -UseBasicParsing
