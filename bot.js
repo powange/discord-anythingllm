@@ -406,8 +406,11 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
       const card = await stormCard();
       console.log('  🌩️ fiche tempête jointe');
       trace.path = 'storm';
-      const answer = await askAnythingLLM(`${message}\n\nFiche calculée à l'instant :\n\n${card}${QUERY_INSTRUCTION}`,
-        `${sessionId}-query-${Date.now()}`, onStatus, { mode: 'query', agent: false });
+      // Mode chat et non query : en query, AnythingLLM refuse sans appeler le modèle quand sa propre
+      // recherche ne trouve rien dans les documents, ce qui arrivait une fois sur deux ici
+      const answer = await askAnythingLLM(`${message}\n\nFiche calculée à l'instant :\n\n${card}\n\n(Consigne : réponds `
+        + 'uniquement à partir de cette fiche. Garde les noms anglais des îles tels quels, sans les traduire. '
+        + `${DISCORD_FORMAT})`, `${sessionId}-storm-${Date.now()}`, onStatus, { mode: 'chat', agent: false });
       trace.queryAnswer = answer;
       if (answer && !isQueryRefusal(answer)) return answer;
     } catch (err) {
