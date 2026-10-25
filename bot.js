@@ -12,6 +12,9 @@ const CODE_VERSION = createHash('sha256')
   .update(['bot.js', 'sync.js', 'storm.js'].map((f) => readFileSync(new URL(`./${f}`, import.meta.url))).join('\n'))
   .digest('hex').slice(0, 12);
 const STARTED_AT = new Date().toISOString();
+// Dernière réponse où le modèle a réfléchi (<think>) : « Enable Thinking » réactivé dans LM Studio
+// rend les réponses ~3× plus lentes. Exposé par /health et signalé dans les logs.
+let lastThinkingAt = null;
 
 // --- Configuration depuis l'environnement ---
 const {
@@ -261,6 +264,11 @@ async function askAnythingLLM(message, sessionId, onStatus, { mode = ANYTHINGLLM
   const result = stripThinking(answer);
   if (result.length < answer.trim().length) {
     console.log(`  🧠 raisonnement du modèle retiré (${answer.trim().length - result.length} car.)`);
+    if (!lastThinkingAt || Date.now() - Date.parse(lastThinkingAt) > 30 * 60_000) {
+      console.warn('⚠️ Le modèle réfléchit avant de répondre : « Enable Thinking » s\'est-il réactivé dans LM Studio ? '
+        + '(réponses environ 3 fois plus lentes)');
+    }
+    lastThinkingAt = new Date().toISOString();
     // Diagnostic : pourquoi le modèle a conclu ce qu'il a conclu (ex. AUCUNE_INFO malgré un bon document)
     if (DEBUG) {
       const thinking = answer.match(/<think>([\s\S]*?)(<\/think>|$)/i)?.[1] ?? '';
@@ -599,6 +607,7 @@ function startTestApi() {
       if (req.method === 'GET' && req.url === '/health') {
         return send(res, 200, {
           ok: true, version: CODE_VERSION, startedAt: STARTED_AT, discord: client.isReady(), agentFallback, debug: DEBUG,
+          lastThinkingAt,
         });
       }
       if (req.method !== 'POST' || req.url !== '/ask') return send(res, 404, { error: 'route inconnue' });
