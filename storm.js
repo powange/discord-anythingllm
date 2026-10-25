@@ -110,14 +110,15 @@ export async function stormCard() {
 }
 
 // Remplace les heures de la fiche citées dans la réponse par des horodatages Discord : « 05:28 » devient
-// <t:…:t> (heure locale de chaque lecteur) et le « (dans 16 min) » qui suit devient <t:…:R> (« dans
-// 16 minutes », mis à jour en direct par Discord). Fait par le bot : le modèle recopierait mal ces nombres.
+// « <t:…:t> · <t:…:R> », soit l'heure locale de chaque lecteur et « dans 16 minutes », mis à jour en direct
+// par Discord. Le « (dans 16 min) » écrit par le modèle est retiré (figé, il deviendrait faux) ; le compte
+// à rebours est ajouté même quand le modèle ne l'a pas écrit. Fait par le bot : le modèle recopierait mal
+// ces nombres.
 export function withDiscordTimestamps(answer, times) {
   return answer
     .replace(/\s*\(heure de Paris\)/gi, '')
-    .replace(/(?<!\d)(\d{1,2})[:h](\d{2})(?!\d)(\s*\((?:soit\s+)?dans\s+(?:environ\s+)?[^)]*\))?/g, (match, h, m, delay) => {
+    .replace(/(?<!\d)(\d{1,2})[:h](\d{2})(?!\d)(\s*\((?:soit\s+)?dans\s+(?:environ\s+)?[^)]*\))?/g, (match, h, m) => {
       const s = times.get(`${h.padStart(2, '0')}:${m}`);
-      if (!s) return match;
-      return `<t:${s}:t>${delay ? ` (<t:${s}:R>)` : ''}`;
+      return s ? `<t:${s}:t> · <t:${s}:R>` : match;
     });
 }
