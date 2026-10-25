@@ -118,6 +118,18 @@ N'ajoute pas un endpoint dont le contenu dépend du compte lié au jeton : tous 
 
 Le dossier [`skills`](skills) contient des skills AnythingLLM pour Sea of Thieves : wiki (`sot-wiki`), guides Rare Thief (`sot-guides`), annonces officielles (`sot-news`) et état des serveurs (`sot-status`). Elles s'installent dans AnythingLLM, pas dans le bot : voir le [README des skills](skills/README.md). Le bot envoie directement à l'agent les questions sur les personnages, le lore, l'état des serveurs, les actualités et les événements (données en direct ; les annonces synchronisées, en anglais, sont mal retrouvées par une question en français). Les questions sur les guides et énigmes passent d'abord par le mode query, avec l'agent en relais.
 
+### Interface HTTP de test
+
+Avec `TEST_API_TOKEN` défini, le bot ouvre une petite interface HTTP (port 3000 du conteneur, publié sur `TEST_API_HOST_PORT`, 3105 par défaut) pour l'interroger sans Discord, par exactement le même chemin qu'un message (fiches, extraits, mode query, relais de l'agent) :
+
+```bash
+curl -s -X POST http://<serveur>:3105/ask \
+  -H "Authorization: Bearer <jeton>" -H "Content-Type: application/json" \
+  -d '{"question": "quelle est la dernière version du jeu ?"}'
+```
+
+La réponse JSON contient le texte, le pied de réponse, le chemin suivi, les outils de l'agent, les fiches, les statuts et les images qui auraient été jointes. Un champ `history` (`[{ "question": …, "answer": … }]`) simule un fil de conversation. `GET /health` indique l'état du bot. Le port est destiné au réseau local : ne pas le rediriger depuis Internet.
+
 ## Lancer en local
 
 ```bash

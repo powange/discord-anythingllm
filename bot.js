@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { createServer } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } from 'discord.js';
 import { startDocSync, findItemImages, findWikiNames } from './sync.js';
 
@@ -11,6 +13,8 @@ const {
   ANYTHINGLLM_MODE = 'chat',
   ANYTHINGLLM_AGENT = 'false',
   ALLOWED_CHANNEL_IDS = '',
+  TEST_API_TOKEN = '', // interface HTTP de test : désactivée si vide
+  TEST_API_PORT = '3000',
 } = process.env;
 
 // Échec propre au démarrage si une variable obligatoire manque
@@ -466,6 +470,71 @@ function responseFooter(ms, trace) {
   return `-# ${parts.join(' · ')}`;
 }
 
+// Traitement complet d'une question, commun à Discord et à l'interface HTTP de test :
+// routage (fiches, extraits, query, agent), puis pied de réponse et objets à illustrer
+async function answerQuestion(question, { sessionId, onStatus, thread = null }) {
+  const started = Date.now();
+  const trace = { tools: new Set(), cards: [], path: null };
+  if (thread) console.log(`  🧵 suite d'un fil (${thread.exchanges} échange(s) précédent(s))`);
+  const answer = await askWithRouting(question, sessionId, onStatus, trace, thread);
+  const ms = Date.now() - started;
+  return {
+    answer, trace, ms,
+    footer: responseFooter(ms, trace),
+    items: findItemImages(answer || '', 4, { properNoun: true }),
+  };
+}
+
+// --- Interface HTTP de test (désactivée sans TEST_API_TOKEN) ---
+// POST /ask { question, history?: [{ question, answer }] } → même traitement qu'un message Discord,
+// réponse en JSON. Permet de tester le bot sans passer par Discord. GET /health : état du bot.
+function startTestApi() {
+  if (!TEST_API_TOKEN) return;
+  const expected = Buffer.from(`Bearer ${TEST_API_TOKEN}`);
+  const authorized = (req) => {
+    const got = Buffer.from(String(req.headers.authorization || ''));
+    return got.length === expected.length && timingSafeEqual(got, expected);
+  };
+  const send = (res, status, body) => {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(body, null, 2));
+  };
+
+  createServer(async (req, res) => {
+    try {
+      if (!authorized(req)) return send(res, 401, { error: 'jeton manquant ou invalide' });
+      if (req.method === 'GET' && req.url === '/health') {
+        return send(res, 200, { ok: true, discord: client.isReady(), agentFallback, debug: DEBUG });
+      }
+      if (req.method !== 'POST' || req.url !== '/ask') return send(res, 404, { error: 'route inconnue' });
+
+      let raw = '';
+      for await (const chunk of req) {
+        raw += chunk;
+        if (raw.length > 100_000) return send(res, 413, { error: 'requête trop volumineuse' });
+      }
+      const { question, history = [] } = JSON.parse(raw || '{}');
+      if (!question || typeof question !== 'string') return send(res, 400, { error: 'champ "question" requis' });
+
+      // Fil simulé : [{ question, answer }, …] du plus ancien au plus récent, comme des « Répondre » successifs
+      const previous = history.reduce((parent, h) => ({ question: h.question ?? '', answer: h.answer ?? '', parent }), null);
+      const statuses = [];
+      console.log(`🧪 test HTTP | q="${question.slice(0, 80)}"`);
+      const { answer, trace, ms, footer, items } = await answerQuestion(question, {
+        sessionId: 'http-test', onStatus: (s) => statuses.push(s), thread: previous ? threadContext(previous) : null,
+      });
+      return send(res, 200, {
+        answer, footer, ms,
+        path: trace.path, tools: [...trace.tools], cards: trace.cards, thread: trace.thread ?? 0,
+        statuses, images: items.map(({ name, nameEn, category }) => ({ name, nameEn, category })),
+      });
+    } catch (err) {
+      console.error('Erreur test HTTP:', err);
+      return send(res, 500, { error: err.message });
+    }
+  }).listen(TEST_API_PORT, () => console.log(`🧪 Interface de test HTTP active sur le port ${TEST_API_PORT}`));
+}
+
 // --- Découpe des réponses longues ---
 // Coupe de préférence sur les sauts de ligne, sans dépasser la limite
 function splitMessage(text, limit = DISCORD_LIMIT) {
@@ -524,6 +593,7 @@ client.once(Events.ClientReady, (c) => {
     console.log(`   Salons en écoute totale: ${[...allowedChannels].join(', ')}`);
   }
   startDocSync();
+  startTestApi();
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -566,23 +636,19 @@ client.on(Events.MessageCreate, async (message) => {
   };
 
   try {
-    const started = Date.now();
-    const trace = { tools: new Set(), cards: [], path: null };
     // « Répondre » à un message de Sotia : on continue ce fil ; sinon nouvelle conversation
     const previous = await loadThread(message);
     const thread = previous ? threadContext(previous) : null;
-    if (thread) console.log(`  🧵 suite d'un fil (${thread.exchanges} échange(s) précédent(s))`);
-    const answer = await withTyping(message.channel, () =>
-      askWithRouting(question, sessionId, showStatus, trace, thread),
+    const { answer, footer, items } = await withTyping(message.channel, () =>
+      answerQuestion(question, { sessionId, onStatus: showStatus, thread }),
     );
 
     // La réponse est prête : on retire le message de statut éphémère
     if (statusMsg) await statusMsg.delete().catch(() => {});
 
-    const footer = showFooter ? `\n\n${responseFooter(Date.now() - started, trace)}` : '';
-    const chunks = splitMessage((answer || '_(réponse vide)_') + footer);
+    const chunks = splitMessage((answer || '_(réponse vide)_') + (showFooter ? `\n\n${footer}` : ''));
     // Images des objets du coffre et emblèmes cités, jointes au dernier morceau (nom anglais en rappel)
-    const embeds = findItemImages(answer || '', 4, { properNoun: true }).map((item) =>
+    const embeds = items.map((item) =>
       new EmbedBuilder().setTitle(item.name)
         .setDescription(item.nameEn ? `${item.category}\nEN : ${item.nameEn}` : item.category)
         .setThumbnail(item.image));

@@ -6,6 +6,10 @@ services:
     build: .
     container_name: discord-anythingllm
     restart: unless-stopped
+    # Interface HTTP de test (POST /ask), active seulement si TEST_API_TOKEN est défini.
+    # Port publié sur le serveur pour le réseau local : ne pas le rediriger depuis Internet.
+    ports:
+      - "${TEST_API_HOST_PORT:-3105}:3000"
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       ANYTHINGLLM_URL: ${ANYTHINGLLM_URL}
@@ -17,6 +21,7 @@ services:
       ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS:-}
       DEBUG: ${DEBUG:-false}
       RESPONSE_FOOTER: ${RESPONSE_FOOTER:-true}
+      TEST_API_TOKEN: ${TEST_API_TOKEN:-}
       FIRST_BYTE_TIMEOUT_MS: ${FIRST_BYTE_TIMEOUT_MS:-300000}
       STREAM_IDLE_TIMEOUT_MS: ${STREAM_IDLE_TIMEOUT_MS:-60000}
       SOT_API_TOKEN: ${SOT_API_TOKEN:-}
