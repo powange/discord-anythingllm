@@ -290,6 +290,7 @@ async function searchExtracts(question) {
       .filter((r) => typeof r.score === 'number' && r.score >= MIN_EXTRACT_SCORE)
       .slice(0, MAX_EXTRACTS)
       .map((r) => ({
+        score: r.score,
         title: r.metadata?.title ?? '?',
         // Préfixe « passage: » du modèle d'embedding et en-tête de métadonnées d'AnythingLLM retirés
         text: String(r.text || '').replace(/^passage:\s*/, '').replace(/<document_metadata>[\s\S]*?<\/document_metadata>/, '')
@@ -369,6 +370,7 @@ function threadContext(record) {
     history: 'Échanges précédents de cette conversation (pour comprendre la nouvelle question) :\n\n'
       + chain.map((r) => `${r.question ? `Joueur : ${r.question}\n` : ''}Sotia : ${clip(r.answer)}`).join('\n\n'),
     // Les questions du fil aident à retrouver le sujet (« et son bateau ? » après « qui est Flameheart ? »)
+    questions: chain.map((r) => r.question).filter(Boolean),
     search: chain.map((r) => r.question).filter(Boolean).join(' '),
     exchanges: chain.length,
   };
@@ -413,8 +415,17 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
     trace.cards = known.map((k) => k.name);
   }
 
-  // Meilleurs extraits pour la question seule, sans consigne (voir searchExtracts)
-  const found = await searchExtracts(search);
+  // Meilleurs extraits pour la question seule, sans consigne (voir searchExtracts). Dans un fil, une
+  // recherche par question : mises bout à bout, elles diluent la similarité (aucun extrait au seuil)
+  const queries = [question, ...(thread?.questions ?? [])];
+  const merged = new Map();
+  for (const list of await Promise.all(queries.map(searchExtracts))) {
+    for (const e of list) {
+      const key = `${e.title}\n${e.text}`;
+      if (!merged.has(key) || merged.get(key).score < e.score) merged.set(key, e);
+    }
+  }
+  const found = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, MAX_EXTRACTS);
   const extracts = found.length
     ? `\n\nExtraits de la base de connaissances :\n\n${found.map((e) => `[${e.title}]\n${e.text}`).join('\n\n')}`
     : '';
