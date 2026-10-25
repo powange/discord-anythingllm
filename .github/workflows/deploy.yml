@@ -1,0 +1,27 @@
+# Redéploie la stack Portainer à chaque push sur main (remplace le « Pull and redeploy » manuel).
+# Le webhook de la stack est stocké dans le secret PORTAINER_PROD_WEBHOOK_URL du dépôt.
+name: Déploiement Portainer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Déclencher le webhook Portainer
+        env:
+          WEBHOOK: ${{ secrets.PORTAINER_PROD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::Secret PORTAINER_PROD_WEBHOOK_URL absent : déploiement ignoré"
+            exit 0
+          fi
+          curl --fail --silent --show-error --max-time 120 -X POST "$WEBHOOK"
+          echo "Redéploiement Portainer déclenché"
