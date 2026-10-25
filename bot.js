@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } from 'discord.js';
-import { startDocSync, findItemImages, findWikiNames } from './sync.js';
+import { startDocSync, findItemImages, findWikiNames, findCategoryCards } from './sync.js';
 
 // Version du code en cours d'exécution : empreinte de bot.js + sync.js (le .git n'est pas dans l'image).
 // Exposée par /health pour vérifier qu'un déploiement est bien en place.
@@ -410,16 +410,22 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
   // vectorielle retrouve mal un nom propre (« Au cœur du fléau » → « Cœur ardent »).
   // Ils passent avant les noms du wiki : « le Coutelas de Flameheart » est un objet du coffre.
   const known = findItemImages(search, 3);
-  if (!known.length && wikiTitles.length) {
+  // Questions de comptage ou de liste : lignes du sommaire du coffre pour les catégories citées
+  // (« combien d'animaux de compagnie ? » → Familiers / Pets : 43 objets)
+  const categories = COUNT_INTENT.test(question) ? findCategoryCards(search) : [];
+  if (!known.length && !categories.length && wikiTitles.length) {
     console.log(`  ↪ nom du wiki cité (${wikiTitles.join(', ')}) → @agent directement`);
     trace.path = 'agent';
     return askAgent(message, sessionId, onStatus, wikiTitles, trace);
   }
-  const cards = known.length
-    ? `\n\nFiches de la base de connaissances :\n\n${known.map((k) => `[${k.category}]\n${k.entry}`).join('\n\n')}`
+  const cards = (known.length || categories.length)
+    ? `\n\nFiches de la base de connaissances :\n\n${[
+      ...known.map((k) => `[${k.category}]\n${k.entry}`),
+      ...categories,
+    ].join('\n\n')}`
     : '';
-  if (known.length) {
-    console.log(`  📇 fiche(s) jointe(s) : ${known.map((k) => k.name).join(', ')}`);
+  if (known.length || categories.length) {
+    console.log(`  📇 fiche(s) jointe(s) : ${[...known.map((k) => k.name), ...categories.map((c) => c.split(' : ')[0])].join(', ')}`);
     trace.cards = known.map((k) => k.name);
   }
 
@@ -460,12 +466,18 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
 // Pas « fais une recherche web » : l'agent doit pouvoir choisir une skill spécialisée (ex. PNJ du wiki)
 // Indications de skill selon le sujet : sans elles, l'agent répondait à une énigme avec les annonces
 // officielles (« pas d'énigme »), ou à une question de mécanique de mémoire, sans source
+// Formulées comme des ordres avec un exemple de recherche : une simple suggestion était ignorée
+// (sot-news choisi pour l'énigme, sa description citant « Community Weekend »)
 const TOOL_HINTS = [
   [/(?<!\p{L})(énigmes?|riddles?|guides?|soluces?|solutions?|défis|challenges?|journaux|journals?)(?!\p{L})/iu,
-    'Pour une énigme, un guide, un défi ou des emplacements, utilise la compétence de guides Rare Thief (sot-guides).'],
+    'Cette question porte sur une énigme, un guide ou un défi : appelle d\'abord l\'outil sot-guides avec une '
+      + 'recherche en anglais (ex. « Community Weekend riddle », « Bilge Rats challenges »), pas sot-news.'],
   [/(?<!\p{L})(comment|fonctionne|marche|mécaniques?|peut-on|peux-on|est-ce qu'on peut|réparer)(?!\p{L})/iu,
-    'Pour le fonctionnement du jeu, cherche dans le wiki (sot-wiki).'],
+    'Cette question porte sur le fonctionnement du jeu : appelle d\'abord l\'outil sot-wiki avec des mots-clés '
+      + 'en anglais (ex. « repair ship hull », « gunpowder barrel »).'],
 ];
+// Questions de comptage ou de liste : on y joint les fiches de catégorie du coffre
+const COUNT_INTENT = /(?<!\p{L})(combien|nombre|liste|lister|quels sont|quelles sont|how many)(?!\p{L})/iu;
 
 async function askAgent(message, sessionId, onStatus, wikiTitles = [], trace) {
   const hints = [
@@ -473,11 +485,14 @@ async function askAgent(message, sessionId, onStatus, wikiTitles = [], trace) {
     // Une seule indication, la plus spécifique (ordre de TOOL_HINTS) : « comment résoudre l'énigme » → guides
     ...TOOL_HINTS.filter(([re]) => re.test(message)).slice(0, 1).map(([, h]) => h),
   ];
-  const agentQuestion = `${message}\n\n(Consigne : utilise en priorité une de tes compétences spécialisées `
-    + `si l'une correspond à la question, sinon fais une recherche sur le web. ${hints.join(' ')}${hints.length ? ' ' : ''}`
+  // Sans réflexion, le modèle saute volontiers l'appel d'outil et répond de mémoire, parfois en prétendant
+  // avoir cherché : on impose au moins un outil pour toute question sur le jeu
+  const agentQuestion = `${message}\n\n(Consigne : pour une question sur Sea of Thieves, appelle toujours au moins `
+    + 'un outil avant de répondre : une de tes compétences spécialisées si l\'une correspond, sinon web-browsing. '
+    + `${hints.join(' ')}${hints.length ? ' ' : ''}Ne prétends jamais avoir fait une recherche que tu n'as pas faite. `
     // Sources non fiables : on accepte de répondre, mais en le disant
-    + 'Si ta réponse ne vient pas d\'une de tes compétences (recherche web générale ou connaissances personnelles), '
-    + `précise qu'elle n'est pas vérifiée à 100 % et cite la source s'il y en a une. ${DISCORD_FORMAT})`;
+    + 'Si ta réponse vient d\'une recherche web générale, précise qu\'elle n\'est pas vérifiée à 100 % et cite la source. '
+    + `${DISCORD_FORMAT})`;
   const ask = () => askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true, trace });
   const answer = await ask();
   if (answer) return answer;

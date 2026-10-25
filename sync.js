@@ -257,6 +257,25 @@ export function findItemImages(text, limit = 4, { properNoun = false } = {}) {
   return kept.sort((a, b) => a.start - b.start).slice(0, limit);
 }
 
+// Fiches de catégorie du coffre : libellé (minuscules) → ligne du sommaire avec les nombres d'objets
+let categoryCards = new Map();
+// Synonymes courants absents des libellés de l'API (clé de catégorie → mots des joueurs)
+const CATEGORY_ALIASES = { Pets: ['animaux de compagnie', 'animal de compagnie', 'animaux'] };
+
+// Catégories du coffre citées dans un texte (mot entier, singulier ou pluriel) : lignes du sommaire
+export function findCategoryCards(text, limit = 3) {
+  const lower = nameKey(text);
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const lines = [];
+  for (const [key, line] of categoryCards) {
+    const singular = key.replace(/[sx]$/, '');
+    if (new RegExp(`(?<![\\p{L}\\d])${escape(singular)}[sx]?(?![\\p{L}\\d])`, 'u').test(lower) && !lines.includes(line)) {
+      lines.push(line);
+    }
+  }
+  return lines.slice(0, limit);
+}
+
 // Catalogue du coffre : un document par sous-catégorie, avec une introduction qui dit ce qu'est
 // le « coffre » (sinon le modèle comprend « coffres au trésor »). Images et identifiants retirés.
 async function syncChestItems(docs) {
@@ -280,6 +299,27 @@ async function syncChestItems(docs) {
         .map((s) => `${label(s)} ${s.count}`).join(' ; ')})`),
     ].join('\n'),
   });
+
+  // Fiches de catégorie (comptages), retrouvées par libellé FR/EN : la recherche vectorielle ne relie pas
+  // « animaux de compagnie » à la catégorie « Familiers / Pets »
+  const cards = new Map();
+  const addCard = (name, line) => {
+    const key = name && nameKey(String(name).trim());
+    if (key && key.length >= 4 && key !== 'null' && !cards.has(key)) cards.set(key, line);
+  };
+  for (const c of categories) {
+    const catLine = `Coffre du pirate — ${label(c)} : ${c.count} objets (${(c.subcategories ?? [])
+      .filter((s) => s.label?.fr || s.label?.en).map((s) => `${label(s)} ${s.count}`).join(' ; ')})`;
+    addCard(c.label?.fr, catLine);
+    addCard(c.label?.en, catLine);
+    for (const alias of CATEGORY_ALIASES[c.key] ?? []) addCard(alias, catLine);
+    for (const s of c.subcategories ?? []) {
+      const subLine = `Coffre du pirate — ${label(c)} › ${label(s)} : ${s.count} objets`;
+      addCard(s.label?.fr, subLine);
+      addCard(s.label?.en, subLine);
+    }
+  }
+  if (cards.size) categoryCards = cards;
 
   const images = new Map();
   const sources = new Set();
