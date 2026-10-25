@@ -433,11 +433,18 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
 // Session neuve à chaque appel : tout historique (AUCUNE_INFO, réponses précédentes) pousse
 // sinon le modèle à recopier une ancienne réponse au lieu d'appeler ses outils.
 // Pas « fais une recherche web » : l'agent doit pouvoir choisir une skill spécialisée (ex. PNJ du wiki)
-function askAgent(message, sessionId, onStatus, wikiTitles = [], trace) {
+async function askAgent(message, sessionId, onStatus, wikiTitles = [], trace) {
   const hint = wikiTitles.length ? ` Pages du wiki probablement concernées : ${wikiTitles.join(', ')}.` : '';
   const agentQuestion = `${message}\n\n(Consigne : utilise en priorité une de tes compétences spécialisées `
     + `si l'une correspond à la question, sinon fais une recherche sur le web.${hint} ${DISCORD_FORMAT})`;
-  return askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true, trace });
+  const ask = () => askAnythingLLM(agentQuestion, `${sessionId}-agent-${Date.now()}`, onStatus, { mode: 'chat', agent: true, trace });
+  const answer = await ask();
+  if (answer) return answer;
+  // Réponse vide : le modèle a généré du texte qu'AnythingLLM n'a pas retenu comme réponse (vu après
+  // un appel de skill renvoyant une longue annonce). Un second essai suffit en général.
+  console.warn('  ↻ réponse vide de l\'agent → nouvel essai');
+  onStatus?.('🔄 Je reformule ma réponse…');
+  return ask();
 }
 
 // Pied de réponse (petit texte gris Discord « -# ») : durée, chemin suivi, outils de l'agent, fiches
