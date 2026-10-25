@@ -410,6 +410,7 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
       // recherche ne trouve rien dans les documents, ce qui arrivait une fois sur deux ici
       const answer = await askAnythingLLM(`${message}\n\nFiche calculée à l'instant :\n\n${card}\n\n(Consigne : réponds `
         + 'uniquement à partir de cette fiche. Garde les noms anglais des îles tels quels, sans les traduire. '
+        + 'Ne parle pas de « fiche » : présente l\'information comme venant des prévisions de Merfolk\'s Lullaby. '
         + `${DISCORD_FORMAT})`, `${sessionId}-storm-${Date.now()}`, onStatus, { mode: 'chat', agent: false });
       trace.queryAnswer = answer;
       if (answer && !isQueryRefusal(answer)) return answer;
