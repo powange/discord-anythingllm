@@ -46,11 +46,13 @@ const QUERY_REFUSAL = (process.env.QUERY_REFUSAL_RESPONSE
 const NO_ANSWER_MARKER = 'AUCUNE_INFO';
 // Discord n'affiche pas les tableaux Markdown : on demande des listes à la place
 const DISCORD_FORMAT = "Pas de tableau Markdown (Discord ne les affiche pas), utilise des listes.";
-// Pas de règle plus stricte (« s'ils mentionnent seulement le sujet… ») : un modèle à réflexion
-// l'applique avec zèle et répond AUCUNE_INFO alors que le document donne la réponse
-const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis et des extraits ou fiches joints. `
-  + `S'ils apportent la réponse, même en partie, réponds avec ce qu'ils contiennent. Réponds exactement `
-  + `« ${NO_ANSWER_MARKER} » et rien d'autre seulement s'ils n'aident pas du tout à répondre. ${DISCORD_FORMAT})`;
+// Ni trop souple (« même en partie » : le modèle citait la description décorative d'un seau du coffre
+// pour une question de mécanique de jeu), ni « s'ils mentionnent seulement le sujet » (appliqué avec
+// zèle par un modèle à réflexion). On vise le cas précis : une description d'objet n'est pas une règle de jeu.
+const QUERY_INSTRUCTION = `\n\n(Consigne : réponds uniquement à partir des documents fournis et des extraits ou fiches joints, `
+  + `s'ils répondent à la question posée. La description d'un objet du coffre ou d'un emblème ne suffit pas `
+  + `à répondre à une question sur le fonctionnement du jeu (mécanique, gameplay). S'ils ne répondent pas à la `
+  + `question, réponds exactement « ${NO_ANSWER_MARKER} » et rien d'autre. ${DISCORD_FORMAT})`;
 
 // Questions sur un personnage ou le lore : la base (versions, coffre, emblèmes) ne les couvre pas et ne
 // fait que citer des noms dans des objets. On passe directement à l'agent et à ses skills (PNJ, navires
