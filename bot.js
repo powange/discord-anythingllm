@@ -419,12 +419,14 @@ async function askWithRouting(question, sessionId, onStatus, trace = { tools: ne
     ? `\n\nExtraits de la base de connaissances :\n\n${found.map((e) => `[${e.title}]\n${e.text}`).join('\n\n')}`
     : '';
   if (found.length) console.log(`  📄 extrait(s) joint(s) : ${found.map((e) => e.title).join(', ')}`);
+  trace.extracts = found.map((e) => e.title); // diagnostic (interface de test)
 
   trace.path = 'documents';
   // Session neuve, comme pour l'agent : l'historique du salon contient des « même question → AUCUNE_INFO »
   // que le modèle recopie sans lire les documents (réponse en 5 s, sans réflexion)
   const answer = await askAnythingLLM(message + cards + extracts + QUERY_INSTRUCTION, `${sessionId}-query-${Date.now()}`,
     onStatus, { mode: 'query', agent: false });
+  trace.queryAnswer = answer; // diagnostic : réponse du premier passage, même si l'agent prend le relais
   if (answer && !isQueryRefusal(answer)) return answer;
 
   console.log('  ↪ rien dans les documents → relance en @agent');
@@ -527,6 +529,8 @@ function startTestApi() {
         answer, footer, ms,
         path: trace.path, tools: [...trace.tools], cards: trace.cards, thread: trace.thread ?? 0,
         statuses, images: items.map(({ name, nameEn, category }) => ({ name, nameEn, category })),
+        // Diagnostic : extraits joints au premier passage et sa réponse (ex. AUCUNE_INFO avant relais)
+        extracts: trace.extracts ?? [], queryAnswer: trace.queryAnswer ?? null,
       });
     } catch (err) {
       console.error('Erreur test HTTP:', err);
