@@ -267,6 +267,8 @@ export function findItemImages(text, limit = 4, { properNoun = false } = {}) {
 let categoryCards = new Map();
 // Synonymes courants absents des libellés de l'API (clé de catégorie → mots des joueurs)
 const CATEGORY_ALIASES = { Pets: ['animaux de compagnie', 'animal de compagnie', 'animaux'] };
+// Au-delà, une fiche de sous-catégorie ne donne que le nombre d'objets (176 chapeaux : trop long à joindre)
+const MAX_LISTED_ITEMS = 60;
 
 // Catégories du coffre citées dans un texte (mot entier, singulier ou pluriel) : lignes du sommaire
 export function findCategoryCards(text, limit = 3) {
@@ -306,28 +308,8 @@ async function syncChestItems(docs) {
     ].join('\n'),
   });
 
-  // Fiches de catégorie (comptages), retrouvées par libellé FR/EN : la recherche vectorielle ne relie pas
-  // « animaux de compagnie » à la catégorie « Familiers / Pets »
-  const cards = new Map();
-  const addCard = (name, line) => {
-    const key = name && nameKey(String(name).trim());
-    if (key && key.length >= 4 && key !== 'null' && !cards.has(key)) cards.set(key, line);
-  };
-  for (const c of categories) {
-    const catLine = `Coffre du pirate — ${label(c)} : ${c.count} objets (${(c.subcategories ?? [])
-      .filter((s) => s.label?.fr || s.label?.en).map((s) => `${label(s)} ${s.count}`).join(' ; ')})`;
-    addCard(c.label?.fr, catLine);
-    addCard(c.label?.en, catLine);
-    for (const alias of CATEGORY_ALIASES[c.key] ?? []) addCard(alias, catLine);
-    for (const s of c.subcategories ?? []) {
-      const subLine = `Coffre du pirate — ${label(c)} › ${label(s)} : ${s.count} objets`;
-      addCard(s.label?.fr, subLine);
-      addCard(s.label?.en, subLine);
-    }
-  }
-  if (cards.size) categoryCards = cards;
-
   const images = new Map();
+  const sectionNames = new Map(); // « Catégorie/Sous-catégorie » → noms des objets (fiches de liste)
   const sources = new Set();
   const counts = { 'mis à jour': 0, inchangé: 0 };
   for (const cat of categories) {
@@ -342,6 +324,8 @@ async function syncChestItems(docs) {
         // On saute les titres de l'API : l'introduction les remplace
         const lines = stripImages(md.split('\n').filter((l) => l.trim() && !l.startsWith('#')), images, where);
         const items = lines.filter((l) => l.startsWith('- ')).length;
+        sectionNames.set(section, lines.map((l) => l.match(/^- \*\*(.+?)\*\*(?: \/ \*(.+?)\*)?/)).filter(Boolean)
+          .map(([, fr, en]) => (en && en !== fr ? `${fr} (${en})` : fr)));
         const text = [
           `# Coffre du pirate de Sea of Thieves — ${where} (${whereEn})`,
           '',
@@ -362,6 +346,30 @@ async function syncChestItems(docs) {
   }
 
   if (images.size) imageSets.set('chest-items', images);
+
+  // Fiches de catégorie (comptages et listes), retrouvées par libellé FR/EN : la recherche vectorielle ne
+  // relie pas « animaux de compagnie » à « Familiers / Pets », et pour une liste elle ne ramène que
+  // quelques extraits (3 chats sur 33). Une sous-catégorie pas trop longue porte donc la liste complète.
+  const cards = new Map();
+  const addCard = (name, line) => {
+    const key = name && nameKey(String(name).trim());
+    if (key && key.length >= 4 && key !== 'null' && !cards.has(key)) cards.set(key, line);
+  };
+  for (const c of categories) {
+    const catLine = `Coffre du pirate — ${label(c)} : ${c.count} objets (${(c.subcategories ?? [])
+      .filter((s) => s.label?.fr || s.label?.en).map((s) => `${label(s)} ${s.count}`).join(' ; ')})`;
+    addCard(c.label?.fr, catLine);
+    addCard(c.label?.en, catLine);
+    for (const alias of CATEGORY_ALIASES[c.key] ?? []) addCard(alias, catLine);
+    for (const s of c.subcategories ?? []) {
+      const names = sectionNames.get(`${c.key}/${s.key}`) ?? [];
+      const list = names.length && names.length <= MAX_LISTED_ITEMS ? ` — liste complète : ${names.join(' ; ')}` : '';
+      const subLine = `Coffre du pirate — ${label(c)} › ${label(s)} : ${s.count} objets${list}`;
+      addCard(s.label?.fr, subLine);
+      addCard(s.label?.en, subLine);
+    }
+  }
+  if (cards.size) categoryCards = cards;
 
   // Sous-catégories disparues de l'API (le sommaire porte la source de base : il n'est pas périmé)
   const removed = await removeStale(docs.filter((doc) => doc.docSource !== base), base, sources);
