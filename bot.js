@@ -1,8 +1,16 @@
 import 'dotenv/config';
 import { createServer } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } from 'discord.js';
 import { startDocSync, findItemImages, findWikiNames } from './sync.js';
+
+// Version du code en cours d'exécution : empreinte de bot.js + sync.js (le .git n'est pas dans l'image).
+// Exposée par /health pour vérifier qu'un déploiement est bien en place.
+const CODE_VERSION = createHash('sha256')
+  .update(['bot.js', 'sync.js'].map((f) => readFileSync(new URL(`./${f}`, import.meta.url))).join('\n'))
+  .digest('hex').slice(0, 12);
+const STARTED_AT = new Date().toISOString();
 
 // --- Configuration depuis l'environnement ---
 const {
@@ -517,7 +525,9 @@ function startTestApi() {
     try {
       if (!authorized(req)) return send(res, 401, { error: 'jeton manquant ou invalide' });
       if (req.method === 'GET' && req.url === '/health') {
-        return send(res, 200, { ok: true, discord: client.isReady(), agentFallback, debug: DEBUG });
+        return send(res, 200, {
+          ok: true, version: CODE_VERSION, startedAt: STARTED_AT, discord: client.isReady(), agentFallback, debug: DEBUG,
+        });
       }
       if (req.method !== 'POST' || req.url !== '/ask') return send(res, 404, { error: 'route inconnue' });
 
@@ -600,7 +610,7 @@ const client = new Client({
 });
 
 client.once(Events.ClientReady, (c) => {
-  console.log(`✅ Connecté en tant que ${c.user.tag}`);
+  console.log(`✅ Connecté en tant que ${c.user.tag} (version ${CODE_VERSION})`);
   console.log(
     `   Workspace: ${ANYTHINGLLM_WORKSPACE} | Mode: ${agentFallback ? 'query → @agent' : ANYTHINGLLM_MODE}${agentEnabled ? ' | Agent: on' : ''}`,
   );
